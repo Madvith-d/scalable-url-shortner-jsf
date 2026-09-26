@@ -7,12 +7,15 @@ import java.util.Locale;
 import java.util.concurrent.atomic.LongAdder;
 
 import com.shortify.dto.AnalyticsResponse;
+import com.shortify.dto.GeographyResponse;
+import com.shortify.exception.UrlException;
 import com.shortify.entity.ClickEvent;
 import com.shortify.repository.ClickEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskRejectedException;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -26,22 +29,43 @@ public class AnalyticsService {
     private final ShortUrlService urls;
     private final ThreadPoolTaskExecutor executor;
     private final Clock clock;
+    private final GeoLookupService geoLookup;
     private final LongAdder dropped = new LongAdder();
 
     public AnalyticsService(ClickEventRepository clicks, ShortUrlService urls,
-                            @Qualifier("analyticsExecutor") ThreadPoolTaskExecutor executor, Clock clock) {
+                            @Qualifier("analyticsExecutor") ThreadPoolTaskExecutor executor, Clock clock,
+                            GeoLookupService geoLookup) {
         this.clicks = clicks;
         this.urls = urls;
         this.executor = executor;
         this.clock = clock;
+        this.geoLookup = geoLookup;
     }
 
     public void record(Long id, String referrer, String userAgent) {
-        ClickEvent event = new ClickEvent(id, clock.instant(), referrerHost(referrer), device(userAgent), "Unknown");
+        record(id, referrer, userAgent, null);
+    }
+
+    public void record(Long id, String referrer, String userAgent, String clientIp) {
+        var accessedAt = clock.instant();
+        String host = referrerHost(referrer);
+        String deviceType = device(userAgent);
         try {
             executor.execute(() -> {
+                GeoLocation location = GeoLocation.UNKNOWN;
+                if (clientIp != null) {
+                    try {
+                        GeoLocation resolved = geoLookup.lookup(clientIp);
+                        if (resolved != null) {
+                            location = resolved;
+                        }
+                    } catch (RuntimeException exception) {
+                        location = GeoLocation.UNKNOWN;
+                    }
+                }
                 try {
-                    clicks.save(event);
+                    clicks.save(new ClickEvent(id, accessedAt, host, deviceType,
+                            location.countryCode(), location.city()));
                 } catch (RuntimeException exception) {
                     drop();
                 }
@@ -69,6 +93,18 @@ public class AnalyticsService {
         return new AnalyticsResponse(clicks.countByShortUrlId(id), clicks.clicksOverTime(id).stream()
                 .map(row -> new AnalyticsResponse.Day(row.getLabel(), row.getClicks())).toList(),
                 buckets(clicks.referrers(id)), buckets(clicks.devices(id)), buckets(clicks.geography(id)));
+    }
+
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public GeographyResponse geography(Long id, String by) {
+        urls.requireOwned(id);
+        List<ClickEventRepository.Bucket> rows = switch (by) {
+            case "country" -> clicks.topCountries(id);
+            case "city" -> clicks.topCities(id);
+            default -> throw new UrlException(HttpStatus.BAD_REQUEST,
+                    "INVALID_GEOGRAPHY_SELECTOR", "Geography must be grouped by country or city.");
+        };
+        return new GeographyResponse(clicks.countByShortUrlId(id), buckets(rows));
     }
 
     private List<AnalyticsResponse.Bucket> buckets(List<ClickEventRepository.Bucket> rows) {

@@ -17,11 +17,22 @@ spring:
     hibernate:
       ddl-auto: validate
 
+logging:
+  level:
+    # HTTP diagnostics can expose the visitor IP and paid-provider API key.
+    org.apache.hc.client5.http: "OFF"
+    org.apache.hc.core5.http: "OFF"
+
 server:
   forward-headers-strategy: none
   port: ${SERVER_PORT:8080}
 
 shortify:
+  geolocation:
+    enabled: ${GEO_ENABLED:true}
+    database-path: ${GEO_DATABASE_PATH:}
+    api-key: ${GEO_API_KEY:}
+    trusted-proxies: ${GEO_TRUSTED_PROXIES:}
   redis:
     prefix: ${REDIS_PREFIX:shortify:}
   cache:

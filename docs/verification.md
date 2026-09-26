@@ -294,3 +294,42 @@ Verified on **2026-09-26**, after Phase 5 commit **`769aa2f`**.
 ### Limits and running state
 
 The production application is available at **http://localhost:3002**. The unrelated application on port 3000 and unrelated untracked files were preserved. Browser tests created uniquely named test accounts/links in the development database; this redesign verification did not reset the database. The backend's previously verified 277-test checkpoint is unchanged and was not rerun for CSS/theme-only work. Contrast checks and Chromium interaction tests are not a full accessibility certification; manual screen-reader testing and additional browser engines were not performed.
+
+## Country and city geolocation
+
+Verified on **2026-09-26**, following the UI redesign. The selected approach is a local MaxMind-compatible city database with an optional paid ip-api HTTPS fallback.
+
+### Delivered behavior
+
+- Valid public IPs are resolved from the socket peer by default. Forwarded IPs require explicitly trusted proxy CIDRs and a bounded, validated right-to-left chain. Literal parsing avoids DNS and excludes private, local, reserved, and documentation ranges, including mapped IPv4. Disabling geolocation also skips address extraction.
+- Only country code and city are persisted. V4 adds nullable `country_code` and `city` columns without modifying historical records or migrations V1–V3. Historical clicks remain Unknown. Raw IPs may exist transiently in the bounded worker queue but are never stored in the database, Redis, or analytics responses; HTTP diagnostic logging is disabled to prevent address/key disclosure.
+- Local complete data avoids external disclosure. The optional fixed HTTPS provider has a 1.5-second total response deadline, an 8 KiB body bound, no redirects/retries, one outbound request at a time, and failure/rate-limit backoff. Failed or unavailable lookup retains local country data or records Unknown.
+- Enrichment occurs inside the existing bounded worker, before the database insert transaction. Redirects remain 302; HEAD and invalid/inactive/expired links do not record clicks. Geolocation failures do not drop otherwise valid clicks.
+- The existing five-field analytics response is preserved, with country buckets in `geography`. A new owned `/api/urls/{id}/analytics/geography?by=country|city` endpoint supplies top-ten buckets and a lifetime denominator. City labels include country context; missing cities are Unknown.
+- The frontend adds Country/City selection, independent request states, retry, refresh, and cancellation using the existing session lifecycle. The root README documents database/key setup, optional read-only Compose mounting, proxy trust, and external IP disclosure.
+
+### Executed checks
+
+| Check | Result |
+| --- | --- |
+| Full backend `./mvnw --no-transfer-progress clean verify` on JDK 21 | **475 passed: 319 unit + 156 PostgreSQL/Redis integration tests**, zero failures/errors/skips; Maven duration 55.221 seconds |
+| Frontend `npm test` | **51 passed**, zero failures/skips |
+| Frontend `npm run typecheck` | Passed |
+| Production backend/frontend Docker builds | Passed, including Java packaging and Next.js standalone build |
+| Default and optional database-mount Compose configuration validation | Passed |
+| Production Chromium suite, Light and Dark projects | **26 passed in 31.4 seconds**, without retries |
+| `git diff --check` | Passed |
+
+The backend application container was stopped during integration tests to avoid interference from its cleanup scheduler. PostgreSQL/Redis remained running; tests removed only their own tracked records and temporary migration schemas. Both applications were rebuilt and deployed afterward, and **all four Compose services were healthy**. The deployed database confirms successful Flyway versions 1–4 and exactly the eight intended click-event columns, with no IP or coordinate column. No database reset or volume deletion occurred.
+
+Backend checks cover strict IP ranges, proxy spoofing/trust boundaries, Unicode city normalization, local and remote fallback behavior, bounded bodies, real HTTP no-redirect/no-retry behavior, a stalled response body, backoff, safe diagnostics, migration preservation, country/city ordering and top-ten limits, lifetime totals, ownership, historical Unknown, and same-named cities in different countries. A latch-controlled real-HTTP integration test proves that a stalled lookup does not delay the 302 and holds no transaction during lookup; request timestamps are preserved. Existing authentication, rate-limit, cache, scheduler, and redirect regressions passed.
+
+Browser verification used installed Playwright Chromium because no connected browser integration tools were available. Real-backend flows exercised creation and redirects, resulting Unknown country/city data, selector changes, geography network failure/recovery, activation/history consistency, account isolation, pagination, empty/expired data, and session expiry. Five separately named fixture scenarios per theme cover populated and country-only locations, long labels, the response-specific lifetime denominator, refresh, cancellation across rapid switching, logout, and geography-triggered 401 handling. **These fixtures intercept API data and are not live-provider verification.** Layout checks cover 320, 375, 414, 768, and 1440 pixels; populated geography screenshots were reviewed at desktop/mobile sizes in both themes, along with real Unknown and empty analytics screens.
+
+### Operational prerequisites and limits
+
+The application runs at **http://localhost:3002**, with backend **http://localhost:8081**. The deployed `GEO_API_KEY` and `GEO_DATABASE_PATH` are empty: no production MMDB or paid key was supplied. Consequently live provider success/accuracy is **not verified or activated**, and localhost/private addresses correctly produce Unknown. Successful local responses were tested with a mocked database reader; remote outcomes were tested with controlled transports, including a real local HTTP server for transport behavior. The fixed paid HTTPS endpoint returned its expected missing-key error, confirming reachability only, not authenticated lookup success. Configure the database/key using the root README to enable real geographic results.
+
+No visitor fingerprinting, unique-visitor logic, new bot exclusion, GPS/coordinates, or synchronous lookup was added. Analytics remains best effort; slow provider calls can delay metadata or fill the bounded queue. No manual assistive-technology audit or other browser-engine verification was performed. Test accounts from browser scenarios remain in the development database; unrelated applications and files were preserved.
+
+Local logs: `.local/geolocation-backend-verify.log`, `.local/geolocation-frontend-typecheck.log`, `.local/geolocation-frontend-unit.log`, `.local/geolocation-image-build.log`, and `.local/geolocation-production-browser.log`. Screenshots/reports are ignored under `frontend/test-results/` and `frontend/playwright-report/`.

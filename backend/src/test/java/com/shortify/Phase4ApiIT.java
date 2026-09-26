@@ -213,7 +213,9 @@ class Phase4ApiIT extends RedisIntegrationSupport {
         assertThat(rows.getFirst()).containsEntry("referrer", "example.com").containsEntry("device", "Mobile")
                 .containsEntry("geography", "Unknown");
         assertThat(rows.toString()).doesNotContain("secret", "private", "198.51.100.9", "PrivateCountry");
-        assertThat(rows.getFirst().keySet()).containsExactlyInAnyOrder("id", "short_url_id", "accessed_at", "referrer", "device", "geography");
+        assertThat(rows.getFirst().keySet()).containsExactlyInAnyOrder("id", "short_url_id", "accessed_at", "referrer", "device",
+                "geography", "country_code", "city");
+        assertThat(rows.getFirst()).containsEntry("country_code", null).containsEntry("city", null);
         var response = send("GET", "/api/urls/" + url.getId() + "/analytics", null, token);
         JsonNode body = mapper.readTree(response.body());
         assertThat(response.statusCode()).isEqualTo(200);

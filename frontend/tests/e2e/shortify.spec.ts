@@ -30,7 +30,7 @@ async function noOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 }
 
-test("desktop: draft, accounts, owned links, redirect, analytics, state consistency and isolation", async ({ page, context, request, baseURL }, testInfo) => {
+test("desktop: real backend links, Unknown country/city analytics, geography network recovery and account isolation", async ({ page, context, request, baseURL }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   const destination = `${baseURL}/?visited=${run}`;
@@ -71,6 +71,36 @@ test("desktop: draft, accounts, owned links, redirect, analytics, state consiste
   await expect(page.getByRole("heading", { name: "Referrers", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Devices", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Geography", exact: true })).toBeVisible();
+  const geography = page.getByRole("region", { name: "Geography", exact: true });
+  const geographyView = geography.getByRole("combobox", { name: "Geography view" });
+  const geographyUrl = `${api}/api/urls/${link.id}/analytics/geography`;
+  await expect(geographyView).toHaveValue("country");
+  await expect(async () => {
+    await page.getByRole("button", { name: "Refresh analytics" }).click();
+    await expect(geography.getByRole("listitem")).toHaveCount(1);
+    await expect(geography.getByRole("listitem")).toContainText("Unknown");
+    await expect(geography.locator(".bucket-percent")).toHaveText("100%");
+  }).toPass({ timeout: 15_000 });
+  const cityResponse = page.waitForResponse(`${geographyUrl}?by=city`);
+  await geographyView.selectOption("city");
+  expect(await (await cityResponse).json()).toEqual({ totalClicks: 1, buckets: [{ label: "Unknown", clicks: 1 }] });
+  await expect(geography.getByRole("list", { name: "City breakdown" })).toContainText("Unknown");
+  const refreshedCity = page.waitForResponse(`${geographyUrl}?by=city`);
+  await page.getByRole("button", { name: "Refresh analytics" }).click();
+  expect((await refreshedCity).status()).toBe(200);
+  await expect(geographyView).toHaveValue("city");
+  await expect(geography.getByRole("listitem")).toContainText("Unknown");
+  await page.route(`${geographyUrl}?by=country`, route => route.abort("failed"));
+  await geographyView.selectOption("country");
+  await expect(geography.getByRole("alert")).toContainText("Cannot reach the server");
+  await expect(page.locator(".primary-stat strong")).toHaveText("1");
+  await page.unroute(`${geographyUrl}?by=country`);
+  const recoveredCountry = page.waitForResponse(`${geographyUrl}?by=country`);
+  await geography.getByRole("button", { name: "Try again" }).click();
+  expect(await (await recoveredCountry).json()).toEqual({ totalClicks: 1, buckets: [{ label: "Unknown", clicks: 1 }] });
+  await expect(geography.getByRole("list", { name: "Country breakdown" })).toContainText("Unknown");
+  await expect(geography.getByRole("alert")).toHaveCount(0);
+  await expect(geography).toContainText("Approximate IP-based location");
   await page.screenshot({ path: testInfo.outputPath("analytics-desktop.png"), fullPage: true });
   await page.getByRole("link", { name: "Link details" }).click();
   await page.getByRole("button", { name: "Deactivate link" }).click();
@@ -149,7 +179,13 @@ test("mobile: create and manage expired links, and check every route at responsi
       await page.goto(route);
       await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
       if (route === "/dashboard") await expect(page.getByRole("row").filter({ hasText: alias })).toBeVisible();
-      if (route.endsWith("/analytics")) await expect(page.locator(".primary-stat strong")).toHaveText("0");
+      if (route.endsWith("/analytics")) {
+        await expect(page.locator(".primary-stat strong")).toHaveText("0");
+        const geography = page.getByRole("region", { name: "Geography", exact: true });
+        await expect(geography.getByText("No country data yet.", { exact: true })).toBeVisible();
+        await geography.getByRole("combobox", { name: "Geography view" }).selectOption("city");
+        await expect(geography.getByText("No city data yet.", { exact: true })).toBeVisible();
+      }
       await noOverflow(page);
       if (width === 375 || width === 1440) await page.screenshot({ path: testInfo.outputPath(`${route.replaceAll("/", "-") || "landing"}-${width}.png`), fullPage: true });
     }

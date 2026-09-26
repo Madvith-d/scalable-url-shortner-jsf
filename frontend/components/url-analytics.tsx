@@ -1,14 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { ExternalLink, StatusBadge } from "./link-ui";
 import { ErrorState, Loading } from "./shell";
 import { useResource } from "@/lib/use-resource";
-import type { Analytics, Bucket, ShortUrl } from "@/lib/types";
+import type { Analytics, Bucket, GeographyAnalytics, GeographyBy, ShortUrl } from "@/lib/types";
 
 export function UrlAnalytics({ id }: { id: string }) {
+  const [geographyBy, setGeographyBy] = useState<GeographyBy>("country");
   const link = useResource<ShortUrl>(`/api/urls/${id}`);
   const analytics = useResource<Analytics>(`/api/urls/${id}/analytics`);
+  const geography = useResource<GeographyAnalytics>(`/api/urls/${id}/analytics/geography?by=${geographyBy}`);
   const data = analytics.data;
   const maxDailyClicks = data?.clicksOverTime.reduce((maximum, day) => Math.max(maximum, day.clicks), 1) || 1;
   return (
@@ -19,7 +22,7 @@ export function UrlAnalytics({ id }: { id: string }) {
           <h1>Link analytics</h1>
           <p>Recorded clicks for this link, across all time.</p>
         </div>
-        <button className="button secondary" onClick={() => { link.reload(); analytics.reload(); }} disabled={link.loading || analytics.loading}>
+        <button className="button secondary" onClick={() => { link.reload(); analytics.reload(); geography.reload(); }} disabled={link.loading || analytics.loading || geography.loading}>
           Refresh analytics
         </button>
       </div>
@@ -105,12 +108,24 @@ export function UrlAnalytics({ id }: { id: string }) {
               total={data.totalClicks}
               description="Device categories inferred by the backend. No raw user agents are stored."
             />
-            <Breakdown
-              title="Geography"
-              rows={data.geography}
-              total={data.totalClicks}
-              description="Geolocation is not enabled. All recorded geography is Unknown; no client IP is stored."
-            />
+            <section className="panel breakdown-panel geography-panel" aria-labelledby="geography-title">
+              <h2 id="geography-title">Geography</h2>
+              <label className="geography-control">
+                Geography view
+                <select value={geographyBy} onChange={event => setGeographyBy(event.target.value as GeographyBy)}>
+                  <option value="country">Country</option>
+                  <option value="city">City</option>
+                </select>
+              </label>
+              {geography.loading ? (
+                <Loading message={`Loading ${geographyBy} geography…`} />
+              ) : geography.error ? (
+                <ErrorState message={geography.error} retry={geography.reload} />
+              ) : geography.data && (
+                <BucketList title={geographyBy === "country" ? "Country" : "City"} rows={geography.data.buckets} total={geography.data.totalClicks} />
+              )}
+              <p className="field-hint">Approximate IP-based location, not a precise location. Unknown means the {geographyBy} could not be determined. Top 10 · Percentages of all recorded clicks.</p>
+            </section>
           </div>
           <aside className="analytics-footnote">
             <strong>About these numbers</strong>
@@ -126,25 +141,29 @@ function Breakdown({ title, rows, total, description }: { title: string; rows: B
   return (
     <section className="panel breakdown-panel" aria-label={title}>
       <h2>{title}</h2>
-      {rows.length ? (
-        <ul className="bucket-list" tabIndex={0} aria-label={`${title} breakdown`}>
-          {rows.map(row => (
-            <li key={row.label}>
-              <div>
-                <span className="bucket-label">{row.label}</span>
-                <span>
-                  <strong>{row.clicks.toLocaleString()}</strong>{" "}
-                  <span className="bucket-percent">{total ? Math.round(row.clicks / total * 100) : 0}%</span>
-                </span>
-              </div>
-              <div className="bar-track" aria-hidden="true"><span style={{ width: `${total ? row.clicks / total * 100 : 0}%` }} /></div>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="chart-empty">No {title.toLowerCase()} data yet.</p>
-      )}
+      <BucketList title={title} rows={rows} total={total} />
       <p className="field-hint">{description}</p>
     </section>
+  );
+}
+
+function BucketList({ title, rows, total }: { title: string; rows: Bucket[]; total: number }) {
+  return rows.length ? (
+    <ul className="bucket-list" tabIndex={0} aria-label={`${title} breakdown`}>
+      {rows.map(row => (
+        <li key={row.label}>
+          <div>
+            <span className="bucket-label">{row.label}</span>
+            <span>
+              <strong>{row.clicks.toLocaleString()}</strong>{" "}
+              <span className="bucket-percent">{total ? Math.round(row.clicks / total * 100) : 0}%</span>
+            </span>
+          </div>
+          <div className="bar-track" aria-hidden="true"><span style={{ width: `${total ? row.clicks / total * 100 : 0}%` }} /></div>
+        </li>
+      ))}
+    </ul>
+  ) : (
+    <p className="chart-empty">No {title.toLowerCase()} data yet.</p>
   );
 }

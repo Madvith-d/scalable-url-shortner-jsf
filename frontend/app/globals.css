@@ -314,6 +314,9 @@
   .breakdown-panel { display: flex; flex-direction: column; padding: 20px; }
   .breakdown-panel h2 { font-size: 18px; margin-bottom: 4px; }
   .breakdown-panel > .field-hint { margin-top: auto; padding-top: 16px; }
+  .geography-control { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .geography-control select { flex: 1; }
+  .geography-panel .error-state { margin: 16px 0 0; padding: 16px; }
   .bucket-list { list-style: none; padding: 0; margin: 16px 0 0; max-height: 340px; overflow-y: auto; }
   .bucket-list li { margin-bottom: 18px; }
   .bucket-list li > div:first-child { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; font-size: 13px; }

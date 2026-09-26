@@ -32,7 +32,20 @@ public class ClickEvent {
     @Column(nullable = false, length = 64)
     private String geography;
 
+    @Column(name = "country_code", length = 2)
+    private String countryCode;
+
+    @Column(length = 128)
+    private String city;
+
     protected ClickEvent() { }
+
+    public ClickEvent(Long shortUrlId, Instant accessedAt, String referrer, String device,
+                      String countryCode, String city) {
+        this(shortUrlId, accessedAt, referrer, device, "Unknown");
+        this.countryCode = countryCode;
+        this.city = city;
+    }
 
     public ClickEvent(Long shortUrlId, Instant accessedAt, String referrer, String device, String geography) {
         this.shortUrlId = shortUrlId;

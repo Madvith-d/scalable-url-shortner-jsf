@@ -25,6 +25,8 @@ export type AuthResponse = {
 
 export type Session = { accessToken: string; email: string; expiresAt: number };
 export type Bucket = { label: string; clicks: number };
+export type GeographyBy = "country" | "city";
+export type GeographyAnalytics = { totalClicks: number; buckets: Bucket[] };
 export type Analytics = {
   totalClicks: number;
   clicksOverTime: { date: string; clicks: number }[];

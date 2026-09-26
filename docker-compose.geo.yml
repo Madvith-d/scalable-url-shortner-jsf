@@ -1,0 +1,11 @@
+services:
+  backend:
+    environment:
+      GEO_DATABASE_PATH: /opt/geoip/GeoLite2-City.mmdb
+    volumes:
+      - type: bind
+        source: ${GEO_DATABASE_FILE:?Set GEO_DATABASE_FILE to an existing city MMDB file}
+        target: /opt/geoip/GeoLite2-City.mmdb
+        read_only: true
+        bind:
+          create_host_path: false
