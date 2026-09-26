@@ -1,17 +1,46 @@
-# Shortify — Phase 4
+# Shortify
 
-Shortify is a Java 21 / Spring Boot 3.5 modular backend backed by Docker PostgreSQL and Redis. Phases 1–4 implement collision-safe URL shortening, public redirects, BCrypt/JWT accounts, owner-only URL management, custom aliases, expiration, Redis caching/rate limiting, asynchronous click analytics, and scheduled expiry cleanup.
+A URL shortening and click analytics platform built with **Java 21, Spring Boot, Next.js, TypeScript, PostgreSQL, and Redis**. The backend is a layered modular monolith: controllers → services → Spring Data JPA repositories. Spring Security issues and validates JWTs; Next.js is a client of the backend API, not a separate authentication system.
 
-**No frontend is implemented.** Phase 5 remains separate work. Use TLS before exposing bearer tokens outside local development. Read the cache consistency, outage, and best-effort analytics limitations below before deployment.
+Create short links with optional aliases and expiration, manage your own links, and view click totals, daily activity, referrers, devices, and available geography. Public redirects use Redis with PostgreSQL fallback. Rate limiting, asynchronous click processing, and scheduled expiration cleanup use Redis and Spring mechanisms—no microservices, Kafka, or cloud infrastructure.
+
+Use TLS before exposing bearer tokens outside local development. Read the cache consistency, outage, and best-effort analytics limitations below before deployment. The approved requirements remain in `phases.md` and `scope.md`; executed checks are recorded in [`docs/verification.md`](docs/verification.md).
 
 ## Prerequisites
 
-- JDK 21; this workspace includes `.local/jdk21`.
-- Docker Engine with Docker Compose.
+- Docker Engine with Docker Compose is sufficient for the fully containerized application.
+- For development outside containers: JDK 21 and Node.js 24 LTS with npm. Set `JAVA_HOME` to your installed JDK; the untracked `.local/jdk21` in this implementation workspace is not included in a clean checkout.
 - Internet access for the first build, plus `curl` or `wget` and `unzip` on Linux/macOS.
 - No installed Maven is needed. The official Maven Wrapper 3.3.4 in `backend/` bootstraps Maven 3.9.16.
 
 Commands below use **Bash**, starting at the repository root. If using Fish, enter `bash` first.
+
+## Quick start — all services in Docker
+
+From a fresh checkout:
+
+```bash
+cp .env.example .env
+# Set POSTGRES_PASSWORD and JWT_SECRET in .env to separate strong random values.
+# Generate each with: openssl rand -hex 32
+chmod 600 .env
+docker compose --profile app up -d --build --wait
+```
+
+Open **http://localhost:3000** and register an account. The backend defaults to **http://localhost:8080**. Both application images build from source; Java, Maven, and Node installations are unnecessary on the host for this path. PostgreSQL and Redis have health checks; application startup waits for them. Application containers run as non-root users. The backend health check expects an unauthenticated management request to return 401.
+
+To use different ports, change `SERVER_PORT`, `FRONTEND_PORT`, and optionally `DB_PORT`/`REDIS_PORT` before starting. Update `CORS_ALLOWED_ORIGIN` to the frontend's exact origin. For access through a domain or reverse proxy, also configure `SHORTIFY_BASE_URL` and `NEXT_PUBLIC_API_BASE_URL` as browser-reachable backend origins, and use TLS. The browser cannot resolve Compose service names such as `backend`.
+
+`NEXT_PUBLIC_API_BASE_URL` is a **frontend build-time** setting: rebuild the frontend image when it changes. Container-to-container database/Redis connections use their internal ports independently of host port overrides. Compose binds all published services to loopback by default.
+
+```bash
+docker compose --profile app ps
+docker compose --profile app logs -f backend frontend
+# Stop the application and infrastructure, preserving database data:
+docker compose --profile app down
+```
+
+The `app` profile includes both application services; `docker compose up -d --wait postgres redis` starts infrastructure alone for independent backend/frontend development. Image builds compile/package; run the verification commands below to execute tests rather than treating an image build as a test run.
 
 ## Configure and start PostgreSQL and Redis
 
@@ -33,7 +62,7 @@ Generate at least 32 random bytes for the signing secret, for example with `open
 | `JWT_EXPIRES_IN` | `3600` | Positive access-token lifetime in seconds |
 | `CORS_ALLOWED_ORIGIN` | `http://localhost:3000` | One exact HTTP(S) frontend origin, no path/trailing slash/wildcard |
 
-Set alternative ports in `.env` **before** starting; do not stop unrelated containers. The verified workspace uses PostgreSQL **5434** and HTTP **8081**. Changing credentials in `.env` does not change credentials already initialized in a database volume.
+Set alternative ports in `.env` **before** starting; do not stop unrelated containers. This workspace uses frontend **3002**, backend **8081**, and PostgreSQL **5434**; its ignored `.env` contains those overrides. The examples' clean-checkout defaults remain 3000, 8080, and 5432. Changing credentials in `.env` does not change credentials already initialized in a database volume.
 
 Compose reads `.env`; Spring Boot and Maven do not. Export the root `.env` in each new shell before running the backend or tests:
 
@@ -41,7 +70,8 @@ Compose reads `.env`; Spring Boot and Maven do not. Export the root `.env` in ea
 set -a
 source .env
 set +a
-export JAVA_HOME="$PWD/.local/jdk21"
+# Set JAVA_HOME to your JDK 21 installation if it is not already set.
+# This workspace's optional local JDK is at "$PWD/.local/jdk21".
 export PATH="$JAVA_HOME/bin:$PATH"
 java -version
 docker compose up -d --wait postgres redis
@@ -216,9 +246,41 @@ Redis read/write errors or corrupt payloads fall back to PostgreSQL; cache failu
 | `CLEANUP_INTERVAL` | `60000` | Fixed delay and initial delay, milliseconds |
 | `CLEANUP_BATCH_SIZE` | `200` | Rows per tick, 1–10000 |
 
-## Phase 5 frontend integration plan (not implemented)
+## Frontend development
 
-Next.js will be a client of these Spring APIs, **not a second authentication system**. Login/register will consume the JWT response; the API client will attach `Authorization: Bearer` to URL create/list/get/patch/delete and analytics requests. Keep tokens in client memory for the initial implementation, clear them on logout/401, and require login again after reload/expiry. Do not expose `JWT_SECRET` as a `NEXT_PUBLIC_*` setting or add a separate NextAuth/session issuer. Requests use the configured backend origin without credentialed cookies. Dashboard and URL management screens will consume the page/URL DTOs and display the shared JSON error messages. No frontend files or dependencies are introduced in Phases 1–4.
+With the backend running in another terminal:
+
+```bash
+cd frontend
+npm ci
+cp .env.example .env.local
+# Set NEXT_PUBLIC_API_BASE_URL to the backend origin, e.g. http://localhost:8081.
+npm run dev
+```
+
+Open http://localhost:3000. Only copy the example when `.env.local` does not already exist. Next.js reads this frontend environment file; it does not read the root backend `.env`. **Never copy `JWT_SECRET` or database credentials into frontend settings.** The sole public configuration value is the backend origin.
+
+Routes:
+
+- `/`: URL creation; guests can keep their destination while signing in.
+- `/login` and `/register`: backend account authentication.
+- `/dashboard`: paginated owner-only links and creation form.
+- `/urls/{id}`: destination, expiration, short URL copying, and activation/deactivation.
+- `/urls/{id}/analytics`: total clicks, daily activity, referrers, devices, and geography.
+
+Next.js consumes the Spring JWT and sends bearer headers. Tokens live in per-tab `sessionStorage` and client memory, persist across a reload in that tab, and are cleared at logout or session expiry. There is no refresh token or independent frontend identity system. Session storage is readable by JavaScript: an XSS vulnerability could expose a token. Use TLS, keep dependencies updated, and never render untrusted HTML. Logging out discards the local token; it does not revoke copies held elsewhere.
+
+Geography displays `Unknown` where no trustworthy information exists. Deactivation retains the URL and analytics, and reactivation cannot override expiration. Analytics may appear after a short processing delay; refresh the view after opening a short link.
+
+```bash
+npm run typecheck
+npm test
+npm run build
+# Production build outside Docker:
+npm start
+```
+
+See [`frontend/README.md`](frontend/README.md) for browser test commands and frontend-specific configuration.
 
 ## Layout and responsibilities
 
@@ -228,10 +290,12 @@ Next.js will be a client of these Spring APIs, **not a second authentication sys
 - `entity/`, `repository/`, and `dto/`: JPA persistence, owner-constrained queries, and explicit public DTOs.
 - `backend/src/main/resources/db/migration/`: versioned PostgreSQL schema.
 - `backend/src/test/java/com/shortify/`: unit, PostgreSQL persistence/migration, and actual HTTP integration tests.
-- `frontend/.gitkeep`: directory only; frontend work is deferred to Phase 5.
+- `frontend/app/`, `components/`, and `lib/`: Next.js routes, shared UI/authentication state, API client, and typed responses.
+- `backend/Dockerfile`, `frontend/Dockerfile`, and `docker-compose.yml`: independently buildable applications and local PostgreSQL/Redis infrastructure.
+- `docs/verification.md`: phase-by-phase execution evidence.
 
 ## Stop PostgreSQL and Redis
 
-From the repository root, `docker compose down` stops this project's PostgreSQL and Redis while preserving the PostgreSQL volume. Redis cache/rate-limit state is intentionally lost. **`docker compose down -v` deletes the database data**; use it only for an intentional development reset.
+From the repository root, `docker compose --profile app down` stops this project's containers while preserving the PostgreSQL volume. Redis cache/rate-limit state is intentionally lost. **Adding `-v` deletes database data**; use it only for an intentional development reset. Stop independently started development servers separately with Ctrl+C.
 
-See `phases.md` and `scope.md` for approved boundaries. Phase 4 is implemented; frontend/Phase 5 requires separate approval. No Kafka, microservices, or extra infrastructure has been added.
+See `phases.md` and `scope.md` for approved boundaries and local Git history for each implementation stage. No Kafka, microservices, or extra product features have been added.

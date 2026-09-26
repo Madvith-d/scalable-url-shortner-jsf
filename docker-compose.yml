@@ -1,4 +1,69 @@
 services:
+  backend:
+    profiles: [app]
+    build: ./backend
+    environment:
+      SERVER_PORT: 8080
+      DB_HOST: postgres
+      DB_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-shortify}
+      POSTGRES_USER: ${POSTGRES_USER:-shortify}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PREFIX: ${REDIS_PREFIX:-shortify:}
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_ISSUER: ${JWT_ISSUER:-shortify}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-3600}
+      SHORTIFY_BASE_URL: ${SHORTIFY_BASE_URL:-http://localhost:${SERVER_PORT:-8080}}
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:${FRONTEND_PORT:-3000}}
+      CACHE_TTL: ${CACHE_TTL:-30s}
+      RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-60s}
+      RATE_LIMIT_AUTH: ${RATE_LIMIT_AUTH:-20}
+      RATE_LIMIT_CREATE: ${RATE_LIMIT_CREATE:-60}
+      RATE_LIMIT_REDIRECT: ${RATE_LIMIT_REDIRECT:-300}
+      RATE_LIMIT_REDIRECT_FALLBACK: ${RATE_LIMIT_REDIRECT_FALLBACK:-100}
+      ANALYTICS_WORKERS: ${ANALYTICS_WORKERS:-2}
+      ANALYTICS_QUEUE_CAPACITY: ${ANALYTICS_QUEUE_CAPACITY:-1000}
+      CLEANUP_INTERVAL: ${CLEANUP_INTERVAL:-60000}
+      CLEANUP_BATCH_SIZE: ${CLEANUP_BATCH_SIZE:-200}
+    ports:
+      - "127.0.0.1:${SERVER_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test \"$$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/urls)\" = 401"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  frontend:
+    profiles: [app]
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:${SERVER_PORT:-8080}}
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      NEXT_TELEMETRY_DISABLED: 1
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no"]

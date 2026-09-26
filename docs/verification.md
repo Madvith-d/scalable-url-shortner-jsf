@@ -225,3 +225,45 @@ Surefire ran **128 unit tests**; Failsafe ran **145 integration tests**. No H2 d
 - Expiration now rejects timestamps outside UTC calendar years 0001–9999 with HTTP 400 before database insertion. Four regression cases cover extreme positive/negative years and both calendar boundaries; README documents the supported range.
 - The full `clean verify` suite was rerun after this fix: **277 tests passed (128 unit + 149 integration), zero failures/errors/skips**. The local log is `.local/phase4-final-verify.log`.
 - The two records created by the intentionally failing boundary tests were removed by their exact test IDs before the successful full rerun.
+
+## Phase 5 — Next.js, browser integration, and deployment
+
+Verified on **2026-09-26**, after Phase 4 commit **`9c4872f`**.
+
+### Delivered and executed checks
+
+- Next.js **16.3.6**, React **19.3.0**, and TypeScript implement landing/creation, login, registration, dashboard, URL details/management, and analytics. Fonts are bundled locally. Spring Boot remains the only account/JWT authority.
+- Frontend `npm run build` passed, including the standalone production output. `npm run typecheck` passed. `npm test` passed **39 unit tests**, covering transport, errors, sessions, safe return routes, validation, timestamps, and status helpers.
+- Both Docker images built successfully from source: Java 21 backend and Node 24 standalone frontend. Application containers run as non-root users (verified with `id` inside each container).
+- `docker compose --profile app up -d --wait` started **four healthy services**. Local overrides use frontend **3002**, backend **8081**, PostgreSQL **5434**, and Redis **6379**. An unrelated Next.js process on 3000 was left running. Earlier unrelated Docker containers were stopped at the user's request without deleting their data or volumes.
+- No browser integration tools were connected, so real Chromium automation was executed through the installed Playwright CLI. This was interaction testing, not just screenshots or HTTP-only checks.
+
+### Browser verification
+
+```bash
+cd frontend
+npx playwright install chromium
+E2E_BASE_URL=http://localhost:3002 E2E_API_URL=http://localhost:8081 npm run test:e2e
+```
+
+All **four browser scenarios passed against both the development servers and the production Docker deployment**. The final production run took **16.6 seconds**, with no retries. It exercises:
+
+1. **Pagination and cross-page creation:** seed an owned list through the actual API; navigate both pages; verify page-size changes and disabled navigation; create from page two and verify return to page one; create on the authenticated landing page and verify the dashboard shows the new link.
+2. **Complete desktop account/link flow:** preserve a guest destination/alias through login-to-registration navigation; register; create an expiring custom link; navigate list → detail → analytics; copy the real short URL; open it in a new browser tab and follow the actual 302 to the destination; refresh and observe recorded analytics; deactivate/reactivate and verify redirect behavior plus consistent status/history on all shared pages; reject duplicate/reserved aliases and unsafe URL input; reload; logout/back navigation; verify a second account cannot read another owner's details/analytics; log back in as the owner.
+3. **Mobile and responsive behavior:** register, create an already expired URL, manage it, verify HTTP 410 persists after toggling, and inspect all shared pages. Landing, login, registration, dashboard, details, and analytics were checked at **320, 375, 414, 768, and 1440 pixel widths**. The document does not overflow horizontally; large tables scroll within their own containers. Screenshots were reviewed for desktop landing/analytics and the populated mobile dashboard, including production output.
+4. **Error and session states:** inject a network failure for list loading, retry against the real API, inspect missing/malformed routes, expire the locally stored session, and replace the token with an invalid JWT. Protected data is cleared and login is required. The backend handles the rejected token; no frontend token issuer is involved.
+
+The suite uses real PostgreSQL, Redis, HTTP, and browser interactions for primary flows. Only the network-recovery failure is intercepted. No fake success data replaces the backend. Source: `frontend/tests/e2e/`; final local logs: `.local/browser-tests.log` and `.local/browser-production-tests.log`. Screenshots and reports are under ignored `frontend/test-results/` and `frontend/playwright-report/`.
+
+### Regression fixed during browser verification
+
+A populated dashboard overflowed horizontally at mobile widths despite its table scroll container. Absolutely positioned screen-reader labels escaped the clipping ancestor because the container was not positioned. Adding `position: relative` to the table's scrolling container fixed the underlying bounds. The entire responsive matrix and end-to-end suite were rerun successfully. Test navigation assertions were also corrected to wait for destination pages before filling forms with shared labels, and to distinguish application controls from Next.js development controls/route announcements.
+
+### Final state and limits
+
+- The backend remains at its verified **277-test** checkpoint; Phase 5 adds **39 frontend unit tests and 4 complete browser scenarios**. Docker builds compile/package and are not represented as substitutes for integration tests.
+- `.env`, frontend `.env.local`, dependency folders, build output, browser artifacts, and local logs are ignored. No backend secret is a public frontend variable. Build-time API origins, CORS, startup, Docker commands, API usage, and reliability/security limitations are documented in both READMEs and environment examples.
+- Removed only this session's namespaced `shortify-e2e-…@example.test` browser test data: **27 accounts and 61 URL records**, with click records removed by their foreign-key cascade. No tables or volumes were reset; unrelated data and files were preserved. The test accounts remaining count is zero.
+- Development servers were stopped after verification; the four healthy Docker services remain running for use. Default clean-checkout ports differ from this workspace's documented local overrides.
+- Analytics remains asynchronous/best effort, geography is explicitly `Unknown`, and cache failure consistency remains bounded as documented in Phase 4. Session storage is JavaScript-readable and tab-scoped; logout discards the token rather than revoking copies. A manual screen-reader/assistive-technology audit was not performed.
+- All five requested phases have now been implemented and verified in sequence. The final phase commit records the frontend, deployment configuration, tests, and documentation.

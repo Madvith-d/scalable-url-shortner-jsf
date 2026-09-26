@@ -3,6 +3,13 @@
 !.env.example
 .local/
 **/target/
+**/node_modules/
+**/.next/
+**/out/
+**/coverage/
+**/playwright-report/
+**/test-results/
+*.tsbuildinfo
 .idea/
 .vscode/
 *.iml
