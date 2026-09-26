@@ -55,7 +55,9 @@ All statistics come from `/api/urls/{id}/analytics`. Daily rows use UTC dates an
 
 ## UI and accessibility
 
-The interface uses plain responsive CSS with a light slate/cobalt palette. Space Grotesk and IBM Plex Sans are bundled from the installed Fontsource packages; building/running does not fetch Google Fonts. Layouts adapt for phones, tablets, and desktop. Link tables and long analytics lists provide keyboard-accessible scrolling.
+The interface uses plain responsive CSS, compact typography, neutral surfaces, and restrained blue accents. Space Grotesk and IBM Plex Sans are bundled from the installed Fontsource packages; building/running does not fetch Google Fonts. Layouts adapt for phones, tablets, and desktop. The dashboard table becomes stacked link cards on smaller screens, keeping status and actions visible. Long analytics lists provide keyboard-accessible scrolling.
+
+The header's **Appearance** selector offers **System**, **Light**, and **Dark**. System follows the operating system, including changes while the page is open. Explicit choices persist in localStorage under `shortify.theme`, synchronize across tabs, and remain independent of login/logout. A small script applies the saved appearance before React hydrates to avoid an initial wrong-theme render. Invalid or missing preferences fall back to System. When preference storage is blocked, selection still works for the current page session but does not persist through reloads.
 
 Semantic landmarks, a skip link, visible focus outlines, labeled fields, password visibility controls, status/error announcements, table headers, textual chart values, reduced-motion styles, and copy-failure guidance are included. New-tab destination links have screen-reader notices. The browser suite verifies the main interaction and responsive flows; manual screen-reader testing has not been performed.
 
@@ -67,7 +69,7 @@ npm run typecheck
 npm run build
 ```
 
-Unit tests use Node's built-in runner and TypeScript stripping, with no backend/database writes. They cover session parsing/deadlines, safe return paths, status boundaries, UTC formatting, draft persistence/payloads, URI/alias/expiry/credential validation, bearer headers, no-cache/no-cookie transport, backend errors/retry hints, cancellation, and 204 responses.
+The 51 unit tests use Node's built-in runner and TypeScript stripping, with no backend/database writes. They cover session parsing/deadlines, safe return paths, status boundaries, UTC formatting, draft persistence/payloads, URI/alias/expiry/credential validation, bearer headers, no-cache/no-cookie transport, backend errors/retry hints, cancellation, 204 responses, appearance preference parsing, and pre-hydration theme initialization.
 
 `npm run build` produces standalone output for the frontend Dockerfile. The root Compose `app` profile builds and starts both applications. `npm run start -- --port 3000` also serves a local production build through Next.js.
 
@@ -83,7 +85,7 @@ npm run test:e2e
 E2E_BASE_URL=http://localhost:3002 E2E_API_URL=http://localhost:8081 npm run test:e2e
 ```
 
-The four Chromium scenarios exercise real registration/login/logout, guest draft preservation, creation with aliases and expiration, actual public redirects and resulting analytics, activation changes across pages, clipboard, two-account isolation, pagination, authenticated landing creation, network recovery, missing resources, and expired/rejected sessions. All seven route types are visited. Responsive checks cover widths 320, 375, 414, 768, and 1440 pixels. Screenshots are saved under `test-results/`; the HTML report is under `playwright-report/`. Both are ignored by Git.
+Eight Chromium scenarios run in both Light and Dark projects, for **16 browser tests**. Four functional scenarios exercise real registration/login/logout, guest draft preservation, creation with aliases and expiration, actual public redirects and resulting analytics, activation changes across pages, clipboard, two-account isolation, pagination, authenticated landing creation, network recovery, missing resources, and expired/rejected sessions. Four appearance scenarios check persistence, System changes, cross-tab synchronization, blocked storage, semantic text contrast, and saved appearance before hydration. All seven route types are visited. Responsive checks cover widths 320, 375, 414, 768, and 1440 pixels. Screenshots are saved under `test-results/`; the HTML report is under `playwright-report/`. Both are ignored by Git.
 
 Use a development database: browser tests create uniquely named `shortify-e2e-…@example.test` accounts and links. There is deliberately no public account-delete API, so browser tests do not erase accounts or reset the database. The primary flows use the real backend; network failure is injected only for the recovery scenario. Tests execute serially to respect shared rate limits; rapid repeated runs can legitimately exhaust the default per-IP budget for a minute.
 
@@ -92,6 +94,7 @@ Executed results and deployment verification are recorded in the root `docs/veri
 ## Source map
 
 - `app/`: route entries, global/responsive styles, not-found/error handling.
+- `components/theme-provider.tsx`, `lib/theme.ts`: appearance control, persistence, System resolution, and pre-hydration initialization.
 - `components/auth-provider.tsx`: session lifecycle, bearer requests, expiry/401 handling and cancellation.
 - `components/shell.tsx`: navigation, auth-keyed page reset, protected-page boundary, shared request states.
 - `components/`: creation/auth forms, dashboard, detail, analytics, and copy/status components.

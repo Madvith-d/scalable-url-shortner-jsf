@@ -22,7 +22,7 @@ async function create(page: Page, alias: string, destination: string, expiration
   await page.getByRole("button", { name: "Create short link" }).click();
   const created = await response;
   expect(created.status()).toBe(201);
-  await expect(page.getByRole("heading", { name: "Your short link is ready." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Short link created" })).toBeVisible();
   return created.json() as Promise<{ id: number; shortCode: string; shortUrl: string }>;
 }
 
@@ -36,6 +36,7 @@ test("desktop: draft, accounts, owned links, redirect, analytics, state consiste
   const destination = `${baseURL}/?visited=${run}`;
   const alias = `desk-${run}`;
   await page.goto("/");
+  await page.getByLabel("Appearance", { exact: true }).selectOption(testInfo.project.name);
   await page.screenshot({ path: testInfo.outputPath("landing-desktop.png"), fullPage: true });
   await page.getByLabel(/Destination URL/).fill(destination);
   await page.getByLabel(/Custom alias/).fill(alias);
@@ -43,7 +44,7 @@ test("desktop: draft, accounts, owned links, redirect, analytics, state consiste
   await expect(page).toHaveURL(/\/login\?/);
   await page.getByRole("link", { name: "Create an account" }).click();
   await credentials(page, email("owner"));
-  await expect(page.getByText("Your first link starts here.")).toBeVisible();
+  await expect(page.getByText("No links yet")).toBeVisible();
   await expect(page.getByLabel(/Destination URL/)).toHaveValue(destination);
   await expect(page.getByLabel(/Custom alias/)).toHaveValue(alias);
   const link = await create(page, alias, destination, "2099-01-01T12:00");
@@ -56,7 +57,7 @@ test("desktop: draft, accounts, owned links, redirect, analytics, state consiste
   await page.getByRole("button", { name: `Copy short URL ${link.shortUrl}` }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(link.shortUrl);
   await page.getByRole("link", { name: "View analytics" }).click();
-  await expect(page.getByText("No clicks have been recorded yet.", { exact: false })).toBeVisible();
+  await expect(page.getByText("No clicks recorded yet", { exact: false })).toBeVisible();
   const popupPromise = page.waitForEvent("popup");
   await page.getByRole("link", { name: link.shortUrl, exact: false }).click();
   const popup = await popupPromise;
@@ -107,7 +108,7 @@ test("desktop: draft, accounts, owned links, redirect, analytics, state consiste
   await expect(page).toHaveURL(/\/login/);
   await page.goto("/register");
   await credentials(page, email("other"));
-  await expect(page.getByText("Your first link starts here.")).toBeVisible();
+  await expect(page.getByText("No links yet")).toBeVisible();
   for (const path of [`/urls/${link.id}`, `/urls/${link.id}/analytics`]) {
     await page.goto(path);
     await expect(page.locator(".error-state, .form-error").first()).toContainText("not found");
@@ -119,6 +120,8 @@ test("desktop: draft, accounts, owned links, redirect, analytics, state consiste
   await credentials(page, email("owner"), false);
   await expect(page.getByRole("row").filter({ hasText: alias })).toBeVisible();
   await noOverflow(page);
+  await expect(page.getByLabel("Appearance", { exact: true })).toHaveValue(testInfo.project.name);
+  await expect(page.locator("html")).toHaveAttribute("data-theme", testInfo.project.name);
   expect(errors).toEqual([]);
 });
 
@@ -169,11 +172,11 @@ test("network errors recover, missing routes stay safe, and expired or rejected 
   await expect(page.locator(".error-state, .form-error")).toBeVisible();
   await page.unroute(`${api}/api/urls?*`);
   await page.getByRole("button", { name: "Try again" }).click();
-  await expect(page.getByText("Your first link starts here.")).toBeVisible();
+  await expect(page.getByText("No links yet")).toBeVisible();
   await page.goto("/urls/999999999999");
   await expect(page.locator(".error-state, .form-error")).toContainText("not found");
   await page.goto("/urls/invalid");
-  await expect(page.getByRole("heading", { name: "This page isn’t here." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
   await page.goto("/dashboard");
   await page.evaluate(() => {
     const session = JSON.parse(sessionStorage.getItem("shortify.session")!);

@@ -8,6 +8,10 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: [["list"], ["html", { open: "never" }]],
+  projects: [
+    { name: "light", use: { colorScheme: "light" } },
+    { name: "dark", use: { colorScheme: "dark" } },
+  ],
   use: {
     baseURL: process.env.E2E_BASE_URL || "http://localhost:3000",
     browserName: "chromium",

@@ -267,3 +267,30 @@ A populated dashboard overflowed horizontally at mobile widths despite its table
 - Development servers were stopped after verification; the four healthy Docker services remain running for use. Default clean-checkout ports differ from this workspace's documented local overrides.
 - Analytics remains asynchronous/best effort, geography is explicitly `Unknown`, and cache failure consistency remains bounded as documented in Phase 4. Session storage is JavaScript-readable and tab-scoped; logout discards the token rather than revoking copies. A manual screen-reader/assistive-technology audit was not performed.
 - All five requested phases have now been implemented and verified in sequence. The final phase commit records the frontend, deployment configuration, tests, and documentation.
+
+## UI redesign — Minimal layouts and dark mode
+
+Verified on **2026-09-26**, after Phase 5 commit **`769aa2f`**.
+
+### Delivered
+
+- Reworked creation, authentication, dashboard, details, analytics, and not-found screens with compact headings, simpler copy, neutral surfaces, consistent controls, and responsive spacing. Dashboard rows become stacked cards on smaller screens, keeping status, expiration, copy, manage, and analytics actions visible.
+- Added a shared **System / Light / Dark** appearance selector. Preferences persist in `shortify.theme` localStorage, synchronize across tabs, and survive navigation and logout independently of authentication. System tracks operating-system changes. Blocked storage falls back to an in-memory choice; invalid preferences resolve to System.
+- Applied the stored appearance before React hydration. Semantic colors cover fields, native controls, focus, errors, statuses, and charts. Existing reduced-motion and forced-color support remains.
+- No backend, database, authentication protocol, or API contract changes were made.
+
+### Executed verification
+
+- `npm test`: **51 unit tests passed**, zero failures or skips. The 12 added tests cover preference parsing, System resolution, and pre-hydration initialization, including invalid and blocked storage.
+- `npm run typecheck`: passed.
+- `docker compose --profile app build frontend`: passed, including the Next.js standalone production build. Stopped the owned development server and deployed only the updated frontend; backend, PostgreSQL, and Redis remained running. All four Compose services were healthy.
+- Real Chromium interactions ran through Playwright, since no connected browser integration tools were available. The complete production suite passed **16 tests in 27.2 seconds**, without retries, at `http://localhost:3002` against backend `http://localhost:8081`.
+- Both Light and Dark projects exercised registration/login/logout, draft preservation, creation, copying, actual redirects and analytics, activation consistency, ownership isolation, pagination, expired links, network recovery, missing routes, and expired/rejected sessions. Responsive route checks covered **320, 375, 414, 768, and 1440 pixels** without document overflow.
+- Appearance tests verified explicit persistence through reload/navigation, cross-tab synchronization, System changes, blocked storage, semantic text contrast of at least **4.5:1** for the tested color pairs, and saved dark appearance before hydration with application scripts blocked but stylesheets allowed.
+- Reviewed production screenshots of the populated dashboard, detail, and analytics screens across desktop/mobile and both palettes, in addition to the landing and authentication design previews. Mobile cards retain visible actions and status, long URLs wrap, and empty analytics remain readable.
+- Initial theme-test failures were test-harness issues: a route interception blocked CSS alongside JavaScript, and the contrast helper initially assumed six-digit hex while CSS output included shorthand hex. Both were corrected without weakening the checks, then the complete production suite passed.
+- `git diff --check -- frontend docs/verification.md`: passed for the redesign changes. Unrelated concurrent `.gitignore` edits were left untouched and excluded from the commit. Local logs are `.local/ui-redesign-unit.log`, `.local/ui-redesign-typecheck.log`, `.local/ui-redesign-image-build.log`, and `.local/ui-redesign-production-browser.log`; browser screenshots/reports remain ignored under `frontend/test-results/` and `frontend/playwright-report/`.
+
+### Limits and running state
+
+The production application is available at **http://localhost:3002**. The unrelated application on port 3000 and unrelated untracked files were preserved. Browser tests created uniquely named test accounts/links in the development database; this redesign verification did not reset the database. The backend's previously verified 277-test checkpoint is unchanged and was not rerun for CSS/theme-only work. Contrast checks and Chromium interaction tests are not a full accessibility certification; manual screen-reader testing and additional browser engines were not performed.
