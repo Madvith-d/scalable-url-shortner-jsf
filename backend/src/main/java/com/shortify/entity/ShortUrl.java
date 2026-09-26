@@ -1,6 +1,7 @@
 package com.shortify.entity;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -50,7 +51,7 @@ public class ShortUrl {
 
     @PrePersist
     void initializeCreatedAt() {
-        createdAt = Instant.now();
+        createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
     }
 
     public Long getId() {
@@ -75,5 +76,9 @@ public class ShortUrl {
 
     public boolean isActive() {
         return active;
+    }
+
+    public void deactivate() {
+        active = false;
     }
 }
