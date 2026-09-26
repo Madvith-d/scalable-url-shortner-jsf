@@ -1,8 +1,8 @@
-# Shortify — Phase 3
+# Shortify — Phase 4
 
-Shortify is a Java 21 / Spring Boot 3.5 modular backend backed by Docker PostgreSQL. Phases 1–3 implement collision-safe URL shortening, public redirects, BCrypt/JWT accounts, owner-only URL management, custom aliases, and optional expiration.
+Shortify is a Java 21 / Spring Boot 3.5 modular backend backed by Docker PostgreSQL and Redis. Phases 1–4 implement collision-safe URL shortening, public redirects, BCrypt/JWT accounts, owner-only URL management, custom aliases, expiration, Redis caching/rate limiting, asynchronous click analytics, and scheduled expiry cleanup.
 
-**Phase 4 has not started.** Redis, analytics, rate limiting, cleanup jobs, and the Next.js frontend are not implemented. Use TLS before exposing bearer tokens outside local development. Authentication endpoints are not yet rate-limited.
+**No frontend is implemented.** Phase 5 remains separate work. Use TLS before exposing bearer tokens outside local development. Read the cache consistency, outage, and best-effort analytics limitations below before deployment.
 
 ## Prerequisites
 
@@ -13,7 +13,7 @@ Shortify is a Java 21 / Spring Boot 3.5 modular backend backed by Docker Postgre
 
 Commands below use **Bash**, starting at the repository root. If using Fish, enter `bash` first.
 
-## Configure and start PostgreSQL
+## Configure and start PostgreSQL and Redis
 
 For a fresh checkout only, copy `.env.example` to the root `.env`. Do not overwrite an existing configured file. Set `POSTGRES_PASSWORD` and `JWT_SECRET` before starting. Both are required; no JWT signing secret is supplied by the application or committed to Git.
 
@@ -44,15 +44,15 @@ set +a
 export JAVA_HOME="$PWD/.local/jdk21"
 export PATH="$JAVA_HOME/bin:$PATH"
 java -version
-docker compose up -d --wait postgres
+docker compose up -d --wait postgres redis
 docker compose ps
 ```
 
-Only source your own trusted `.env`; keep values valid Bash assignments. PostgreSQL binds to loopback and persists data in the named `postgres_data` volume.
+Only source your own trusted `.env`; keep values valid Bash assignments. PostgreSQL binds to loopback and persists data in the named `postgres_data` volume. Redis 7 binds to `127.0.0.1:${REDIS_PORT:-6379}` with persistence disabled and no local authentication; do not expose it publicly. Redis keys are temporary, not authoritative data. `REDIS_PASSWORD` is supported by the backend for an externally managed authenticated Redis; setting it does not enable auth in this local Compose service.
 
 ## Build, test, and run
 
-With PostgreSQL healthy and the settings exported:
+With PostgreSQL and Redis healthy and the settings exported:
 
 ```bash
 cd backend
@@ -66,16 +66,16 @@ cd backend
 Flyway owns the schema; Hibernate uses `ddl-auto: validate`. Stop a manually started backend with Ctrl+C.
 
 - Surefire runs unit tests for URL validation, code generation, service behavior, and security configuration.
-- Failsafe starts real HTTP servers on random ports and exercises the full Spring Security filter chain against **real PostgreSQL**, not H2 or mock authentication.
+- Failsafe starts real HTTP servers on random ports and exercises the full Spring Security filter chain against **real PostgreSQL and Redis**, not H2 or mock authentication. Each test context gets a unique Redis prefix. Existing suites use high configured limits, not disabled protection; dedicated tests use low limits.
 - Phase 2 HTTP tests now register an account and attach its bearer token to management requests; public redirect requests remain unauthenticated. Existing validation/collision/expiry coverage is retained.
 - Phase 1 persistence assertions are retained using the repository directly, rather than preserving unauthenticated service accessors.
-- New tests cover account normalization/BCrypt/login, owner isolation, pagination, activation, invalid JWTs, aliases/concurrency, legacy links, and CORS. A migration test creates a uniquely named schema, applies V1, inserts a legacy URL, applies V2, verifies preservation, and drops only that schema.
+- Tests cover account normalization/BCrypt/login, owner isolation, pagination, activation, invalid JWTs, aliases/concurrency, legacy links, CORS, Redis hits/misses/races/expiry, async analytics/privacy, rate limits, outage behavior, and automatic bounded cleanup. A migration test creates a uniquely named schema, applies V1, inserts a legacy URL, applies current migrations, verifies preservation, and drops only that schema.
 - Persistence tests roll back. HTTP tests delete only their own tracked URLs/accounts; tables are never truncated. Identity sequences can advance. Flyway changes to the main schema persist.
 - No database tests are silently skipped. Use a local/development database whose user can create a temporary schema for the migration test.
 
 `./mvnw test` runs unit tests only; **use `clean verify` for acceptance**. Actual counts and results are in `docs/verification.md`. Reports are under `backend/target/{surefire-reports,failsafe-reports}/`.
 
-## Phase 3 API contract
+## API contract
 
 All request bodies are strict JSON: unknown fields, incorrect types, trailing JSON, and malformed bodies return **400**. Entities, password hashes, and database exceptions are never response DTOs.
 
@@ -109,7 +109,7 @@ Creation accepts required `originalUrl`, optional `customAlias`, and optional `e
 
 URL DTO fields remain `id`, `shortCode`, `shortUrl`, `originalUrl`, `createdAt`, `expiresAt`, and `active`. A page contains `content` (URL DTOs), `page`, `size`, `totalElements`, and `totalPages`. Defaults: page 0, size 20. Bounds: page 0–1,000,000, size 1–100; invalid values return **400 `INVALID_PARAMETER`**. Totals and page contents include only the requesting owner's URLs, including inactive/expired ones. Pages beyond available results have empty content.
 
-Missing, other-owner, and legacy-unowned IDs all return the same **404 `URL_NOT_FOUND`** for get/delete/patch. Ownership is queried in the service/repository, never inferred from a caller-supplied JSON owner. `ShortUrlService.requireOwned` is the common guard to reuse before future analytics reads. `/api/urls/{id}/analytics` is already covered by the authentication matcher but **has no endpoint yet**: authenticated callers get 404 and anonymous callers get 401.
+Missing, other-owner, and legacy-unowned IDs all return the same **404 `URL_NOT_FOUND`** for get/delete/patch/analytics. Ownership is queried in the service/repository, never inferred from a caller-supplied JSON owner. Analytics uses the same `ShortUrlService.requireOwned` guard; anonymous callers get 401.
 
 Example after saving a returned access token privately in the shell variable `TOKEN`:
 
@@ -132,7 +132,7 @@ curl -i "$BASE/My_link-1"
 - Omitted/null `customAlias` uses an eight-character SecureRandom Base62 code. Empty aliases are invalid. Generated codes also avoid reserved names.
 - PostgreSQL's unchanged `uk_short_urls_short_code` uniqueness constraint covers both random codes and aliases globally. Each insert uses a separate `REQUIRES_NEW` transaction with `saveAndFlush`, so a unique-constraint failure rolls back before retrying. Random collisions retry at most ten times; an alias conflict immediately returns **409 `ALIAS_IN_USE`**. There is no exists-then-insert race and no overwrite/upsert. Inactive, expired, and legacy codes remain reserved.
 - `originalUrl` must be a nonblank syntactically valid absolute HTTP(S) URI with a valid host, no credentials, whitespace, or literal/encoded control characters. Malformed escapes and invalid ports are rejected. Localhost and IP hosts are accepted; use punycode for internationalized hosts. Validation does not resolve DNS or fetch destinations and does not guarantee reachability or trustworthiness.
-- `expiresAt` is absent/null or an ISO-8601 timestamp string with an offset. As in Phase 2, **past timestamps are intentionally accepted**; the resulting public link immediately returns **410 `URL_EXPIRED`**. Expiration is `expiresAt <= current time`, normalized to PostgreSQL microsecond precision. Reactivation does not bypass expiration. Inactive links return **410 `URL_INACTIVE`**.
+- `expiresAt` is absent/null or an ISO-8601 timestamp string with an offset, within UTC calendar years 0001–9999. As in Phase 2, **past timestamps are intentionally accepted**; the resulting public link immediately returns **410 `URL_EXPIRED`**. Expiration is `expiresAt <= current time`, normalized to PostgreSQL microsecond precision. Reactivation does not bypass expiration. Inactive links return **410 `URL_INACTIVE`**.
 
 ### Existing URLs and schema upgrades
 
@@ -153,12 +153,72 @@ All application, authentication/authorization, and CORS errors use the same four
 | 409 | `EMAIL_IN_USE`, `ALIAS_IN_USE` |
 | 410 | `URL_INACTIVE`, `URL_EXPIRED` |
 | 405 / 415 | `METHOD_NOT_ALLOWED` / `UNSUPPORTED_MEDIA_TYPE` |
-| 503 | `CODE_GENERATION_UNAVAILABLE` after exhausting random-code attempts |
+| 429 | `RATE_LIMITED` with `Retry-After` |
+| 503 | `CODE_GENERATION_UNAVAILABLE` or `RATE_LIMIT_UNAVAILABLE` (with `Retry-After`) |
 | 500 | `INTERNAL_ERROR` for unexpected failures |
+
+## Phase 4 analytics contract
+
+`GET /api/urls/{id}/analytics` requires the owning account's bearer token and returns **200**, `Cache-Control: no-store`, and exactly:
+
+```json
+{
+  "totalClicks": 2,
+  "clicksOverTime": [{"date": "2026-09-26", "clicks": 2}],
+  "referrers": [{"label": "example.com", "clicks": 2}],
+  "devices": [{"label": "Mobile", "clicks": 2}],
+  "geography": [{"label": "Unknown", "clicks": 2}]
+}
+```
+
+An unclicked URL returns `totalClicks: 0` and four empty arrays. This is a lifetime aggregate, without query parameters: UTC calendar days ascending, no zero-filled days; category buckets sorted by clicks descending, then label ascending. PostgreSQL performs `COUNT`/`GROUP BY`; raw events are never fetched into application memory for aggregation. The ownership check and five aggregate queries use one read-only repeatable-read snapshot. Counts include persisted successful GET redirects only, not HEAD, missing/inactive/expired URLs, rejected requests, or failed/dropped analytics tasks. Async arrival means counts may lag the redirect. Inactive/expired URLs retain analytics and remain owner-readable.
+
+V3 adds `click_events` (URL foreign key, access timestamp, referrer host, device, geography), an URL/time index, and an active-expiry cleanup index. V1/V2 are unchanged. Management and cleanup only deactivate: URL IDs, ownership, and click history remain intact. Physical deletion, used by test cleanup, cascades click rows.
+
+### Privacy and bounded background work
+
+- Referrers retain only a lowercase HTTP(S) URI host: credentials, port, path, query, and fragment are removed. Missing referrers are `Direct`; malformed/non-HTTP(S)/oversized values are `Unknown`.
+- User agents are reduced immediately to `Bot`, `Tablet`, `Mobile`, `Desktop`, or `Unknown`. No raw UA or client IP is stored in PostgreSQL or queued; tasks capture only the sanitized event, not the HTTP request.
+- Geography is always `Unknown`. No IP geolocation lookup or geography header trust is enabled; spoofed country/forwarding headers are ignored. Optional trusted-proxy geography is not implemented.
+- Spring's `analyticsExecutor` uses a fixed worker maximum and bounded queue, with `AbortPolicy`, never caller-runs or blocking queue insertion. Rejection and persistence failure drop the event, increment `AnalyticsService.droppedCount()`, and emit a sanitized warning on the first and every 100th drop. There is no public metrics API.
+- Analytics is best effort, not a durable queue: saturation, DB failure, shutdown timeout, or process crashes can lose events. Shutdown allows up to ten seconds to drain. Aggregate bucket cardinality can grow with history; no BI/range/export/retention feature is added.
+- Cleanup runs automatically after each configured fixed delay, one transaction and at most one batch per tick. PostgreSQL `FOR UPDATE SKIP LOCKED` allows concurrent workers without selecting locked rows. It marks expired active URLs inactive and invalidates after commit. A backlog takes multiple ticks; redirect expiry checks do not wait for cleanup.
+
+### Cache consistency and outage policy
+
+Spring Data Redis caches URL ID, destination, active flag, expiration, and an absolute validity deadline. Public cache hits do not query PostgreSQL **for resolution**; the separate asynchronous click INSERT is expected. Misses load PostgreSQL. Every hit still checks active/expiry; expiry is exclusive (`expiresAt <= now` is gone). Redis entry TTL and the serialized deadline are bounded by both `CACHE_TTL` and URL expiration and are never extended on hits.
+
+PATCH, DELETE/deactivation, and scheduled cleanup publish transaction events; only **AFTER_COMMIT** invalidates. Rollbacks leave the cache unchanged. Invalidation atomically rotates a per-code random generation and deletes data. A miss samples generation before loading PostgreSQL; a Lua compare-and-set permits population only if that generation is unchanged. Generation markers expire after twice the maximum cache lifetime; a slow loader cannot write after its original absolute deadline. This prevents an in-flight pre-mutation miss from repopulating after a successful invalidation. Redis is configured without eviction/persistence locally; generation loss through eviction/restart is treated as degraded consistency, still bounded by the absolute deadline.
+
+**This is bounded-staleness, not linearizable invalidation.** A redirect already in flight may finish with its prior snapshot. If Redis invalidation fails, the committed mutation still succeeds; another instance or a recovered Redis may serve its old cache until the original deadline, **at most 30 seconds by default (configurable up to five minutes)**, never indefinitely. Hits cannot refresh this deadline. The same bound covers a process crash between DB commit and invalidation, or lost generation metadata. There is no transactional Redis/PostgreSQL outbox, delivery retry, or instant multi-instance guarantee. Keep instance clocks synchronized. Direct SQL mutations bypass events and have the same TTL bound.
+
+Redis read/write errors or corrupt payloads fall back to PostgreSQL; cache failures are counted internally and logged without sensitive payloads on the first/every 100th failure. Redis connect and command timeouts are 500 ms each, so outages can increase request latency. Cache fallback does not disable request protection:
+
+- Auth and URL creation **fail closed with JSON 503 `RATE_LIMIT_UNAVAILABLE` and `Retry-After`** if Redis cannot enforce their budget.
+- Redirects use a fixed-memory, per-process **global** fallback budget (default 100 per 60 seconds, shared across all clients); after exhaustion they also return 503. This bounds fallback DB load without an unbounded per-client map. The fallback budget resets on process restart and multiplies across application instances; it is not a distributed substitute for Redis.
+- Healthy Redis enforces an atomic Lua `INCR` + first-hit `PEXPIRE` fixed window per category/client. Auth register/login share one category; creation and redirect each have their own. Exceeded limits return the normal four-field JSON error with **429 `RATE_LIMITED`**, `Retry-After` (whole seconds rounded up), and `Cache-Control: no-store`.
+- Keys contain HMAC-SHA256 of the socket peer IP using the configured secret, never the raw IP, and expire with the window. NAT clients share a budget. `server.forward-headers-strategy=none`: neither `X-Forwarded-For` nor `Forwarded` is trusted. Behind a proxy the proxy's socket address is the client key; explicit trusted-proxy handling is future work, not a reason to enable arbitrary forwarding headers.
+- Limiting is selected by the actual Spring handler, not a raw URI heuristic. Auth POST, authenticated URL creation, and all GET/HEAD requests routed to the redirect controller consume their category budget. Encoded aliases, legacy codes, and misses cannot bypass it. Framework resource handlers, error handlers, OPTIONS/preflight, and management/analytics reads are not limited. A one-segment name such as `/favicon.ico` currently resolves through the redirect controller, so it is treated as a redirect miss rather than a static resource.
+
+### Phase 4 settings
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `REDIS_HOST`, `REDIS_PORT` | `localhost`, `6379` | Backend Redis connection; port also controls loopback Compose publishing |
+| `REDIS_PASSWORD` | Empty | Only for an externally managed authenticated Redis |
+| `REDIS_PREFIX` | `shortify:` | Shared namespace across instances of the same deployment; isolate environments/tests |
+| `CACHE_TTL` | `30s` | Positive maximum cache lifetime, at most `5m` |
+| `RATE_LIMIT_WINDOW` | `60s` | Positive fixed-window duration, at most `1d` |
+| `RATE_LIMIT_AUTH` / `RATE_LIMIT_CREATE` / `RATE_LIMIT_REDIRECT` | `20` / `60` / `300` | Positive per-peer requests per window |
+| `RATE_LIMIT_REDIRECT_FALLBACK` | `100` | Positive global per-process redirect allowance during Redis failure |
+| `ANALYTICS_WORKERS` | `2` | Fixed executor workers, 1–32 |
+| `ANALYTICS_QUEUE_CAPACITY` | `1000` | Pending tasks, 1–100000 |
+| `CLEANUP_INTERVAL` | `60000` | Fixed delay and initial delay, milliseconds |
+| `CLEANUP_BATCH_SIZE` | `200` | Rows per tick, 1–10000 |
 
 ## Phase 5 frontend integration plan (not implemented)
 
-Next.js will be a client of these Spring APIs, **not a second authentication system**. Login/register will consume the JWT response; the API client will attach `Authorization: Bearer` to URL create/list/get/patch/delete and, after Phase 4, analytics requests. Keep tokens in client memory for the initial implementation, clear them on logout/401, and require login again after reload/expiry. Do not expose `JWT_SECRET` as a `NEXT_PUBLIC_*` setting or add a separate NextAuth/session issuer. Requests use the configured backend origin without credentialed cookies. Dashboard and URL management screens will consume the page/URL DTOs and display the shared JSON error messages. No frontend files or dependencies are introduced in Phase 3.
+Next.js will be a client of these Spring APIs, **not a second authentication system**. Login/register will consume the JWT response; the API client will attach `Authorization: Bearer` to URL create/list/get/patch/delete and analytics requests. Keep tokens in client memory for the initial implementation, clear them on logout/401, and require login again after reload/expiry. Do not expose `JWT_SECRET` as a `NEXT_PUBLIC_*` setting or add a separate NextAuth/session issuer. Requests use the configured backend origin without credentialed cookies. Dashboard and URL management screens will consume the page/URL DTOs and display the shared JSON error messages. No frontend files or dependencies are introduced in Phases 1–4.
 
 ## Layout and responsibilities
 
@@ -170,8 +230,8 @@ Next.js will be a client of these Spring APIs, **not a second authentication sys
 - `backend/src/test/java/com/shortify/`: unit, PostgreSQL persistence/migration, and actual HTTP integration tests.
 - `frontend/.gitkeep`: directory only; frontend work is deferred to Phase 5.
 
-## Stop PostgreSQL
+## Stop PostgreSQL and Redis
 
-From the repository root, `docker compose down` stops this project's database while preserving its volume. **`docker compose down -v` deletes the database data**; use it only for an intentional development reset.
+From the repository root, `docker compose down` stops this project's PostgreSQL and Redis while preserving the PostgreSQL volume. Redis cache/rate-limit state is intentionally lost. **`docker compose down -v` deletes the database data**; use it only for an intentional development reset.
 
-See `phases.md` and `scope.md` for approved boundaries. Phase 4 requires separate implementation approval.
+See `phases.md` and `scope.md` for approved boundaries. Phase 4 is implemented; frontend/Phase 5 requires separate approval. No Kafka, microservices, or extra infrastructure has been added.

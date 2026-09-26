@@ -5,11 +5,14 @@ import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingPathVariableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -38,19 +41,38 @@ public class ApiExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, "INVALID_PARAMETER", "Request parameters must have the required types.");
     }
 
+    @ExceptionHandler(MissingPathVariableException.class)
+    ResponseEntity<ApiError> handleMissingPathVariable(MissingPathVariableException exception) {
+        if (exception.isMissingAfterConversion()) {
+            return handleParameter(exception);
+        }
+        // A missing mapping variable is a programming error, not invalid client input.
+        return handleUnexpected(exception);
+    }
+
     @ExceptionHandler(NoResourceFoundException.class)
     ResponseEntity<ApiError> handleMissing(Exception exception) {
         return error(HttpStatus.NOT_FOUND, "NOT_FOUND", "The requested resource was not found.");
     }
 
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
-    ResponseEntity<ApiError> handleMediaType(Exception exception) {
-        return error(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "UNSUPPORTED_MEDIA_TYPE", "Use application/json for request bodies.");
+    ResponseEntity<ApiError> handleMediaType(HttpMediaTypeNotSupportedException exception) {
+        return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE).headers(exception.getHeaders())
+                .body(new ApiError(Instant.now(), 415, "UNSUPPORTED_MEDIA_TYPE", "Use application/json for request bodies."));
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+    ResponseEntity<ApiError> handleNotAcceptable(HttpMediaTypeNotAcceptableException exception) {
+        // Set the error format explicitly: the requested representation cannot be produced.
+        return ResponseEntity.status(HttpStatus.NOT_ACCEPTABLE).headers(exception.getHeaders())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(new ApiError(Instant.now(), 406, "NOT_ACCEPTABLE", "The requested response format is not supported."));
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
-    ResponseEntity<ApiError> handleMethod(Exception exception) {
-        return error(HttpStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "The HTTP method is not supported.");
+    ResponseEntity<ApiError> handleMethod(HttpRequestMethodNotSupportedException exception) {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).headers(exception.getHeaders())
+                .body(new ApiError(Instant.now(), 405, "METHOD_NOT_ALLOWED", "The HTTP method is not supported."));
     }
 
     @ExceptionHandler(Exception.class)

@@ -41,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = "shortify.cors.allowed-origin=http://localhost:3000")
-class AuthOwnershipApiIT {
+class AuthOwnershipApiIT extends RedisIntegrationSupport {
 
     @LocalServerPort
     private int port;
@@ -170,7 +170,7 @@ class AuthOwnershipApiIT {
             error(send("GET", path, null, pair.getValue().token()), 404, "URL_NOT_FOUND");
             error(send("DELETE", path, null, pair.getValue().token()), 404, "URL_NOT_FOUND");
             error(send("PATCH", path, Map.of("active", false), pair.getValue().token()), 404, "URL_NOT_FOUND");
-            error(send("GET", path + "/analytics", null, pair.getValue().token()), 404, "NOT_FOUND");
+            error(send("GET", path + "/analytics", null, pair.getValue().token()), 404, "URL_NOT_FOUND");
             assertThat(urls.findById(pair.getKey().path("id").asLong()).orElseThrow().isActive()).isTrue();
         }
         assertList(alice, List.of(a.path("id").asLong()));

@@ -14,6 +14,7 @@ import com.shortify.repository.ShortUrlRepository;
 import com.shortify.security.CurrentUser;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -35,10 +36,15 @@ public class ShortUrlService {
     private final CustomAliasValidator aliases;
     private final Clock clock;
     private final String baseUrl;
+    private final RedirectCache cache;
+    private final ApplicationEventPublisher events;
 
     public ShortUrlService(ShortUrlRepository repository, ShortUrlWriter writer, ShortCodeGenerator generator,
                            OriginalUrlValidator validator, CurrentUser currentUser, CustomAliasValidator aliases, Clock clock,
-                           @Value("${shortify.base-url}") String baseUrl) {
+                           @Value("${shortify.base-url}") String baseUrl, RedirectCache cache,
+                           ApplicationEventPublisher events) {
+        this.cache = cache;
+        this.events = events;
         this.repository = repository;
         this.writer = writer;
         this.generator = generator;
@@ -79,26 +85,36 @@ public class ShortUrlService {
         return response(requireOwned(id));
     }
 
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public String resolve(String shortCode) {
-        ShortUrl shortUrl = repository.findByShortCode(shortCode).orElseThrow(this::notFound);
-        if (!shortUrl.isActive()) {
+        return resolveTarget(shortCode).destination();
+    }
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public RedirectCache.Target resolveTarget(String shortCode) {
+        var target = cache.resolve(shortCode, () -> RedirectCache.Target.from(
+                repository.findByShortCode(shortCode).orElseThrow(this::notFound)));
+        if (!target.active()) {
             throw new UrlException(HttpStatus.GONE, "URL_INACTIVE", "The short URL is inactive.");
         }
-        if (shortUrl.getExpiresAt() != null && !shortUrl.getExpiresAt().isAfter(clock.instant())) {
+        if (target.expiresAt() != null && !target.expiresAt().isAfter(clock.instant())) {
             throw new UrlException(HttpStatus.GONE, "URL_EXPIRED", "The short URL has expired.");
         }
-        return shortUrl.getOriginalUrl();
+        return target;
     }
 
     @Transactional
     public void deactivate(Long id) {
-        requireOwned(id).deactivate();
+        ShortUrl url = requireOwned(id);
+        url.deactivate();
+        events.publishEvent(new RedirectCache.Changed(url.getShortCode()));
     }
 
     @Transactional
     public ShortUrlResponse update(Long id, boolean active) {
         ShortUrl url = requireOwned(id);
         url.setActive(active);
+        events.publishEvent(new RedirectCache.Changed(url.getShortCode()));
         return response(url);
     }
 
@@ -126,7 +142,13 @@ public class ShortUrlService {
             return null;
         }
         try {
-            return Instant.parse(value).truncatedTo(ChronoUnit.MICROS);
+            Instant expiration = Instant.parse(value).truncatedTo(ChronoUnit.MICROS);
+            if (expiration.isBefore(Instant.parse("0001-01-01T00:00:00Z"))
+                    || !expiration.isBefore(Instant.parse("+10000-01-01T00:00:00Z"))) {
+                throw new UrlException(HttpStatus.BAD_REQUEST, "INVALID_BODY",
+                        "expiresAt must be within calendar years 0001 through 9999.");
+            }
+            return expiration;
         } catch (DateTimeParseException exception) {
             throw new UrlException(HttpStatus.BAD_REQUEST, "INVALID_BODY",
                     "expiresAt must be an ISO-8601 timestamp with an offset.");

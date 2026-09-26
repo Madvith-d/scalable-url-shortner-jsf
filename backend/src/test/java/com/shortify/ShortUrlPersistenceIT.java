@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @SpringBootTest
 @Transactional
 @Rollback
-class ShortUrlPersistenceIT {
+class ShortUrlPersistenceIT extends RedisIntegrationSupport {
 
     @Autowired
     private ShortUrlRepository repository;

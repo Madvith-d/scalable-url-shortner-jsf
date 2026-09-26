@@ -46,7 +46,7 @@ import static org.mockito.Mockito.verify;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = "shortify.base-url=https://sho.rt")
-class ShortUrlApiIT {
+class ShortUrlApiIT extends RedisIntegrationSupport {
 
     @LocalServerPort
     private int port;
@@ -163,6 +163,15 @@ class ShortUrlApiIT {
     })
     void rejectsMalformedBodiesAndUnsupportedFields(String body) throws Exception {
         assertError(request("POST", "/api/urls", body), 400, "INVALID_BODY");
+        verify(writer, times(0)).insert(anyString(), anyString(), any(), any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"+1000000000-01-01T00:00:00Z", "-1000000000-01-01T00:00:00Z",
+            "0000-12-31T23:59:59Z", "+10000-01-01T00:00:00Z"})
+    void rejectsExpirationOutsideSupportedCalendarRange(String expiration) throws Exception {
+        assertError(request("POST", "/api/urls", mapper.writeValueAsString(
+                Map.of("originalUrl", "https://example.com", "expiresAt", expiration))), 400, "INVALID_BODY");
         verify(writer, times(0)).insert(anyString(), anyString(), any(), any());
     }
 

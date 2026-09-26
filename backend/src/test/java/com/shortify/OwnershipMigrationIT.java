@@ -13,7 +13,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
-class OwnershipMigrationIT {
+class OwnershipMigrationIT extends RedisIntegrationSupport {
 
     @Autowired
     private DataSource dataSource;

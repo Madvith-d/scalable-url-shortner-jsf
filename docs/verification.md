@@ -150,3 +150,78 @@ Surefire ran **86 unit tests**; Failsafe ran **129 integration tests**. XML and 
 - No Redis, rate limiting, background cleanup, frontend implementation, second authentication system, refresh tokens, password reset, or server-side logout was added. Frontend logout is planned as discarding the bearer token; existing tokens otherwise expire normally or become invalid on secret rotation.
 - The Phase 5 plan keeps the JWT in client memory and attaches it to backend API calls; no Next.js authentication issuer is planned. Legacy unowned links have deliberately no management/claim path.
 - Use TLS outside local development. Authentication rate limiting remains Phase 4 work. No commit was created.
+
+## Phase 4 — Redis, rate limiting, analytics, and background cleanup
+
+Verified on **2026-09-26** on top of Phase 3 commit **`27057ce`** (215 tests at that checkpoint). The complete working tree, including the accompanying security/error/routing review tests, was verified. **No commit or frontend change was made.**
+
+### Environment and actual commands
+
+- Existing Docker Compose PostgreSQL **17.11** remained healthy on `127.0.0.1:5434`.
+- Started the new loopback-only Redis service with `docker compose up -d --wait redis`; actual Redis version was **7.4.11**, published at `127.0.0.1:6379`, with persistence disabled and no local authentication.
+- Used the existing ignored root `.env` without replacing its database settings or JWT secret, local `.local/jdk21` (Temurin **21.0.12.1+1**), and Maven wrapper **3.9.16**.
+- The final verification command was:
+
+```bash
+set -a
+source .env
+set +a
+export JAVA_HOME="$PWD/.local/jdk21"
+export PATH="$JAVA_HOME/bin:$PATH"
+cd backend
+./mvnw --no-transfer-progress clean verify
+```
+
+The final run reported **BUILD SUCCESS** at **`2026-09-26T10:29:10+05:30`**, Maven duration **44.348 seconds**. Its full local log is `.local/phase4-verify-final.log`; XML/text reports are under `backend/target/{surefire-reports,failsafe-reports}/`. The executable JAR is `backend/target/shortify-0.0.1-SNAPSHOT.jar`.
+
+### Final executed tests
+
+| Test class | Tests | Result |
+| --- | ---: | --- |
+| `config.RedirectRateLimitRoutingTest` | 11 | Passed |
+| `config.SecurityConfigurationTest` | 19 | Passed |
+| `exception.ApiExceptionHandlerTest` | 6 | Passed |
+| `service.AnalyticsPrivacyTest` | 13 | Passed |
+| `service.OriginalUrlValidatorTest` | 47 | Passed |
+| `service.RedisReliabilityTest` | 5 | Passed |
+| `service.ShortCodeGeneratorTest` | 2 | Passed |
+| `service.ShortUrlServiceTest` | 25 | Passed |
+| `AuthOwnershipApiIT` | 59 | Passed against PostgreSQL/Redis and actual HTTP |
+| `OwnershipMigrationIT` | 1 | Passed against an isolated PostgreSQL schema |
+| `Phase4ApiIT` | 11 | Passed against PostgreSQL/Redis and actual HTTP |
+| `RateLimitApiIT` | 5 | Passed against PostgreSQL/Redis and actual HTTP |
+| `ShortUrlApiIT` | 61 | Passed against PostgreSQL/Redis and actual HTTP |
+| `ShortUrlPersistenceIT` | 8 | Passed with the original persistence assertions retained |
+| **Total** | **273** | **0 failures, 0 errors, 0 skips** |
+
+Surefire ran **128 unit tests**; Failsafe ran **145 integration tests**. No H2 database, disabled security filters, or blanket test skips were introduced. Each Spring integration-test context gets its own random Redis prefix. Existing tests have high configured limits; dedicated limit tests use low real limits. The short-interval scheduler context is closed after its class so it cannot interfere with other suites.
+
+### Behavior demonstrated
+
+- A miss resolves through real PostgreSQL and populates Redis with ID/destination/active/expiry. A second real HTTP redirect hits Redis; repository spying confirms exactly one code lookup across the two resolutions, while two click events persist separately. Redis TTL is bounded by configured lifetime and by link expiry.
+- PATCH deactivation/reactivation and DELETE invalidate cached state after transaction commit. A separate transaction test proves that invalidation does not happen before commit or after rollback. A latch-controlled concurrent miss proves that a load begun before a committed mutation cannot repopulate the cache afterward under normal Redis availability.
+- An expired active target deliberately retained in real Redis returns `410 URL_EXPIRED` without a PostgreSQL code lookup, proving that expiry validation is not merely delegated to Redis TTL. Invalid and HEAD redirects do not produce click events.
+- With the executor's only worker blocked, a valid HTTP redirect still returns 302 while its analytics event remains queued; releasing the worker persists the event. With the worker and queue both occupied, another redirect still returns 302, the queue remains bounded, and the drop counter increments. There is no caller-runs policy.
+- PostgreSQL rows contain only the referrer host, coarse device, `Unknown` geography, access time, and URL relation. Tests strip credentials/path/query/fragment, classify devices, reject malformed referrers, and confirm spoofed country/forwarding data and raw client headers are absent from persisted rows.
+- Analytics HTTP tests verify the exact five-field contract, empty arrays for zero clicks, UTC day aggregation across midnight, category counts/order, and owner isolation. Other-owner/missing IDs return concealed 404, and anonymous access returns 401. Aggregation uses SQL COUNT/GROUP BY, not fetching click entities into memory.
+- The actual scheduled job runs every **250 ms** in its dedicated test context with **batch size 2**. Five URLs become inactive over multiple automatic ticks; URL rows, owner IDs, and click history remain. Tests never invoke the cleanup method manually to prove scheduling.
+- Authentication, creation, and redirect categories each return JSON 429 with positive `Retry-After`. Twenty concurrent checks permit exactly the configured two requests through real Lua. An expired short window permits requests again. Management/analytics reads and actual framework resource/error handlers remain outside the limiter; selected redirect handlers are protected even for encoded/legacy/invalid codes. Direct-client forwarding headers do not produce new identities. Redis limiter keys contain only HMAC digests, with bounded expirations.
+- Simulated Redis unavailability is exercised through actual HTTP while retaining real PostgreSQL: login/register/create return JSON 503; redirects fall back to PostgreSQL; deactivation commits despite invalidation failure. After Redis recovery, the old value cannot survive its absolute TTL. Separate unit tests prove the fixed-memory global redirect fallback budget stops additional clients with 503, and cover read/corrupt-payload fallback, failed invalidation, absolute deadlines, and slow-loader suppression. Redis was **not physically stopped** during these tests; availability was mocked to avoid affecting other contexts/services.
+- Early runs caught test-harness constructor/spy changes and stale Phase 3 analytics-error expectations; they were corrected, then clean verification was repeated. A successful full run was followed by the final clean run after strengthening TTL bounds and closing the short-scheduler context. Expected constraint-error and sampled outage/drop logs remain diagnostic; Mockito emits its existing JDK dynamic-agent warnings.
+
+### Cleanup, scope, and explicit limitations
+
+- Post-run SQL confirmed **0 users, 0 short URLs, 0 click events, and 0 migration-test schemas**. Flyway migrations **1, 2, and 3** are successful; V1/V2 remain unchanged. Tests delete only their tracked records/schema; no database truncation or volume reset was performed.
+- PostgreSQL and Redis were left healthy. No listener remained on 8080/8081, and the test JVM exited. Redis test namespaces are temporary and expire naturally; no global Redis flush was used.
+- `git diff --check` passed. The local JWT secret was absent from nonignored project files. HEAD remained `27057ce`; frontend and the unrelated untracked `.vsix` were untouched.
+- Cache invalidation is **bounded-staleness, not linearizable**. Normally the generation comparison prevents stale repopulation after invalidation. An already in-flight redirect may complete with old state. Redis failure, generation loss/restart, or a crash between DB commit and invalidation may expose old cached state until its original absolute deadline: **30 seconds by default, configurable up to five minutes**, never extended by cache hits. There is no durable invalidation outbox or immediate cross-instance guarantee; synchronized clocks are required.
+- Auth/create fail closed when Redis cannot enforce limits. Redirect fallback is globally bounded **per process**, not across the cluster, and resets after restart. Redis timeouts can increase outage latency. Proxy forwarding/geography header trust is disabled; NAT/proxy peers share a budget.
+- Analytics is best effort: bounded-queue saturation, persistence failure, shutdown, or process loss may drop events, counted and sampled in logs. There is no durable queue/retry/exactly-once promise. Geography remains `Unknown`; no trusted-proxy geography option was added. Lifetime aggregate bucket counts can grow with history.
+- README and `.env.example` document startup, settings, exact analytics/error contracts, privacy, cache race guarantees, outage behavior, scheduler bounds, and frontend integration expectations. No frontend, Kafka, microservices, new public endpoints beyond analytics, or unapproved infrastructure was added. Parent review and commit followed these checks.
+
+### Additional review regression
+
+- A read-only account-security review identified an expiration-range validation gap. Real HTTP regression tests reproduced HTTP 500 for parseable Java timestamps outside PostgreSQL's supported range.
+- Expiration now rejects timestamps outside UTC calendar years 0001–9999 with HTTP 400 before database insertion. Four regression cases cover extreme positive/negative years and both calendar boundaries; README documents the supported range.
+- The full `clean verify` suite was rerun after this fix: **277 tests passed (128 unit + 149 integration), zero failures/errors/skips**. The local log is `.local/phase4-final-verify.log`.
+- The two records created by the intentionally failing boundary tests were removed by their exact test IDs before the successful full rerun.

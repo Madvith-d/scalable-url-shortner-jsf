@@ -2,7 +2,9 @@ package com.shortify.controller;
 
 import java.net.URI;
 
+import com.shortify.dto.AnalyticsResponse;
 import com.shortify.dto.CreateShortUrlRequest;
+import com.shortify.service.AnalyticsService;
 import com.shortify.dto.ShortUrlPage;
 import com.shortify.dto.ShortUrlResponse;
 import com.shortify.dto.UpdateShortUrlRequest;
@@ -24,9 +26,16 @@ import org.springframework.web.bind.annotation.RestController;
 public class ShortUrlController {
 
     private final ShortUrlService service;
+    private final AnalyticsService analytics;
 
-    public ShortUrlController(ShortUrlService service) {
+    public ShortUrlController(ShortUrlService service, AnalyticsService analytics) {
         this.service = service;
+        this.analytics = analytics;
+    }
+
+    @GetMapping("/{id}/analytics")
+    public ResponseEntity<AnalyticsResponse> analytics(@PathVariable Long id) {
+        return ResponseEntity.ok().header("Cache-Control", "no-store").body(analytics.get(id));
     }
 
     @PostMapping

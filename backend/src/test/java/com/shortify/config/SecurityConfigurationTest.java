@@ -30,8 +30,16 @@ class SecurityConfigurationTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {"http://localhost:3000", "https://example.com", "http://localhost:65535",
+            "http://[::1]:3000"})
+    void acceptsExactCorsOrigins(String origin) {
+        assertThat(configuration.corsFilter(origin, new ObjectMapper())).isNotNull();
+    }
+
+    @ParameterizedTest
     @ValueSource(strings = {"*", "http://*.example.com", "http://localhost:3000/", "http://localhost:3000/path",
-            "http://user@localhost:3000", "http://localhost:3000?x=1", "http://localhost:3000#fragment"})
+            "http://user@localhost:3000", "http://localhost:3000?x=1", "http://localhost:3000#fragment",
+            "http://localhost:65536", "http://localhost:999999", "http://localhost:"})
     void rejectsNonExactCorsOrigins(String origin) {
         assertThatThrownBy(() -> configuration.corsFilter(origin, new ObjectMapper())).isInstanceOf(IllegalArgumentException.class);
     }

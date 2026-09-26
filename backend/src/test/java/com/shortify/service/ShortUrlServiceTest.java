@@ -45,8 +45,12 @@ class ShortUrlServiceTest {
     @BeforeEach
     void setUp() {
         when(currentUser.requireId()).thenReturn(7L);
+        RedirectCache cache = mock(RedirectCache.class);
+        when(cache.resolve(anyString(), any())).thenAnswer(invocation ->
+                invocation.<java.util.function.Supplier<RedirectCache.Target>>getArgument(1).get());
         service = new ShortUrlService(repository, writer, generator, new OriginalUrlValidator(),
-                currentUser, new CustomAliasValidator(), Clock.fixed(NOW, ZoneOffset.UTC), "https://sho.rt/");
+                currentUser, new CustomAliasValidator(), Clock.fixed(NOW, ZoneOffset.UTC), "https://sho.rt/", cache,
+                mock(org.springframework.context.ApplicationEventPublisher.class));
     }
 
     @Test

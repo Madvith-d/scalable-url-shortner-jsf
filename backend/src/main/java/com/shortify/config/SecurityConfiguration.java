@@ -98,14 +98,15 @@ public class SecurityConfiguration {
         URI uri = URI.create(origin);
         if (!("http".equals(uri.getScheme()) || "https".equals(uri.getScheme())) || uri.getHost() == null
                 || uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null
-                || !uri.getRawPath().isEmpty() || origin.contains("*")) {
+                || !uri.getRawPath().isEmpty() || origin.contains("*")
+                || uri.getPort() > 65535 || uri.getRawAuthority().endsWith(":")) {
             throw new IllegalArgumentException("CORS_ALLOWED_ORIGIN must be one exact HTTP(S) origin without a trailing slash.");
         }
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(List.of(origin));
         config.setAllowedMethods(List.of("GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
-        config.setExposedHeaders(List.of("Location"));
+        config.setExposedHeaders(List.of("Location", "Retry-After"));
         config.setAllowCredentials(false);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/api/**", config);

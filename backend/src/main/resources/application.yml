@@ -1,6 +1,13 @@
 spring:
   application:
     name: shortify
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      connect-timeout: 500ms
+      timeout: 500ms
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${POSTGRES_DB:shortify}
     username: ${POSTGRES_USER:shortify}
@@ -11,9 +18,26 @@ spring:
       ddl-auto: validate
 
 server:
+  forward-headers-strategy: none
   port: ${SERVER_PORT:8080}
 
 shortify:
+  redis:
+    prefix: ${REDIS_PREFIX:shortify:}
+  cache:
+    ttl: ${CACHE_TTL:30s}
+  rate-limit:
+    window: ${RATE_LIMIT_WINDOW:60s}
+    auth: ${RATE_LIMIT_AUTH:20}
+    create: ${RATE_LIMIT_CREATE:60}
+    redirect: ${RATE_LIMIT_REDIRECT:300}
+    redirect-fallback: ${RATE_LIMIT_REDIRECT_FALLBACK:100}
+  analytics:
+    workers: ${ANALYTICS_WORKERS:2}
+    queue-capacity: ${ANALYTICS_QUEUE_CAPACITY:1000}
+  cleanup:
+    interval: ${CLEANUP_INTERVAL:60000}
+    batch-size: ${CLEANUP_BATCH_SIZE:200}
   base-url: ${SHORTIFY_BASE_URL:http://localhost:${SERVER_PORT:8080}}
   jwt:
     secret: ${JWT_SECRET}
