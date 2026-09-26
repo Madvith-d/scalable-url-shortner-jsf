@@ -1,30 +1,23 @@
-# Shortify — Phase 2
+# Shortify — Phase 3
 
-Shortify is a Java 21 / Spring Boot 3.5 modular backend backed by Docker PostgreSQL. Phase 2 adds URL creation, cryptographically random short codes, public redirects, metadata retrieval, deactivation, optional expiration, and consistent JSON errors. The Phase 1 entity, repository, Flyway schema, and persistence tests are retained.
+Shortify is a Java 21 / Spring Boot 3.5 modular backend backed by Docker PostgreSQL. Phases 1–3 implement collision-safe URL shortening, public redirects, BCrypt/JWT accounts, owner-only URL management, custom aliases, and optional expiration.
 
-**Phase 3 has not started.** Custom aliases, authentication/ownership, Redis, analytics, and the frontend are not implemented. Management endpoints are currently public: use this phase locally, not as an authenticated public service.
+**Phase 4 has not started.** Redis, analytics, rate limiting, cleanup jobs, and the Next.js frontend are not implemented. Use TLS before exposing bearer tokens outside local development. Authentication endpoints are not yet rate-limited.
 
 ## Prerequisites
 
-- JDK 21. Set `JAVA_HOME` and add `$JAVA_HOME/bin` to `PATH`.
+- JDK 21; this workspace includes `.local/jdk21`.
 - Docker Engine with Docker Compose.
 - Internet access for the first build, plus `curl` or `wget` and `unzip` on Linux/macOS.
-- No installed Maven is needed. The official Apache Maven Wrapper 3.3.4 in `backend/` bootstraps Maven 3.9.16. Windows users can use `mvnw.cmd`.
+- No installed Maven is needed. The official Maven Wrapper 3.3.4 in `backend/` bootstraps Maven 3.9.16.
 
 Commands below use **Bash**, starting at the repository root. If using Fish, enter `bash` first.
 
 ## Configure and start PostgreSQL
 
-For a fresh checkout (do not overwrite an existing configured `.env`):
+For a fresh checkout only, copy `.env.example` to the root `.env`. Do not overwrite an existing configured file. Set `POSTGRES_PASSWORD` and `JWT_SECRET` before starting. Both are required; no JWT signing secret is supplied by the application or committed to Git.
 
-```bash
-cp .env.example .env
-# Edit .env and set POSTGRES_PASSWORD to a strong local password.
-docker compose up -d --wait postgres
-docker compose ps
-```
-
-`.env` is ignored by Git. Compose requires a nonempty `POSTGRES_PASSWORD`. PostgreSQL defaults to database `shortify`, user `shortify`, and a host port bound only to `127.0.0.1`. Data persists in the named `postgres_data` volume.
+Generate at least 32 random bytes for the signing secret, for example with `openssl rand -hex 32`, and store the result privately as `JWT_SECRET` in `.env`. The application uses the **literal UTF-8 bytes** of the value, not Base64/hex decoding, and refuses blank or fewer than 32-byte values. Keep `.env` ignored and restrict its permissions (`chmod 600 .env`). Do not paste credentials or tokens into logs or commits.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -34,157 +27,151 @@ docker compose ps
 | `DB_HOST` | `localhost` | Backend database hostname |
 | `DB_PORT` | `5432` | Published PostgreSQL port and backend database port |
 | `SERVER_PORT` | `8080` | Backend HTTP port |
-| `SHORTIFY_BASE_URL` | `http://localhost:${SERVER_PORT}` (8080 by default) | Public origin used in response `shortUrl` values; set to the externally reachable HTTP(S) origin when needed |
+| `SHORTIFY_BASE_URL` | `http://localhost:${SERVER_PORT}` | Public origin used in response `shortUrl` values |
+| `JWT_SECRET` | Required, at least 32 UTF-8 bytes | HS256 signing/verification secret; use a cryptographically random value |
+| `JWT_ISSUER` | `shortify` | Exact accepted JWT issuer; must not be blank |
+| `JWT_EXPIRES_IN` | `3600` | Positive access-token lifetime in seconds |
+| `CORS_ALLOWED_ORIGIN` | `http://localhost:3000` | One exact HTTP(S) frontend origin, no path/trailing slash/wildcard |
 
-Set alternative ports in `.env` **before** starting if necessary; do not stop unrelated containers. The verified local configuration uses PostgreSQL **5434** and HTTP **8081**. Changing credentials in `.env` does not update credentials already initialized in a PostgreSQL volume.
+Set alternative ports in `.env` **before** starting; do not stop unrelated containers. The verified workspace uses PostgreSQL **5434** and HTTP **8081**. Changing credentials in `.env` does not change credentials already initialized in a database volume.
 
-Compose loads `.env`, but Spring Boot/Maven do not. Before every build or application run in a new shell, export the settings from the repository root:
+Compose reads `.env`; Spring Boot and Maven do not. Export the root `.env` in each new shell before running the backend or tests:
 
 ```bash
 set -a
 source .env
 set +a
-# This workspace has a local JDK 21; otherwise use your installed JDK 21 path.
 export JAVA_HOME="$PWD/.local/jdk21"
 export PATH="$JAVA_HOME/bin:$PATH"
 java -version
+docker compose up -d --wait postgres
+docker compose ps
 ```
 
-Only source your own trusted `.env`; keep values valid Bash assignments. A random hexadecimal password avoids shell quoting issues.
+Only source your own trusted `.env`; keep values valid Bash assignments. PostgreSQL binds to loopback and persists data in the named `postgres_data` volume.
 
-## Build and test
+## Build, test, and run
 
-With PostgreSQL healthy and the variables exported:
+With PostgreSQL healthy and the settings exported:
 
 ```bash
 cd backend
 ./mvnw --version
 ./mvnw clean verify
-```
-
-- Surefire runs unit tests for URL validation, the generator, and service behavior, including expiry boundaries and collision retry limits.
-- Failsafe runs the unchanged `ShortUrlPersistenceIT` against real PostgreSQL with rolled-back transactions.
-- `ShortUrlApiIT` starts the embedded HTTP server on a random port and makes actual HTTP requests with redirects disabled. It checks creation/retrieval/302, validation, missing records, expiration, deactivation, concurrent uniqueness, forced real PostgreSQL unique-constraint collisions, exhausted retries, and sanitized failures.
-- API tests commit through HTTP and delete only their own tracked records afterward. They do not truncate tables or delete unrelated records. Identity sequences can advance. Flyway migrations are not rolled back.
-- No H2 replacement or silent database-test skip is used. Use a local/development PostgreSQL database.
-
-`./mvnw test` runs unit tests only; **use `clean verify` for phase acceptance**. Reports are in `backend/target/surefire-reports/` and `backend/target/failsafe-reports/`. See `docs/verification.md` for actual executed results.
-
-## Start the backend
-
-From `backend/`, with the same exported environment:
-
-```bash
 ./mvnw spring-boot:run
 # Alternatively, after verify:
 # java -jar target/shortify-0.0.1-SNAPSHOT.jar
 ```
 
-Startup should confirm a PostgreSQL connection, Flyway validation/migration, Hibernate initialization, and `Started ShortifyApplication`. Flyway owns the schema; Hibernate uses `ddl-auto: validate`.
+Flyway owns the schema; Hibernate uses `ddl-auto: validate`. Stop a manually started backend with Ctrl+C.
 
-Stop a manually started backend with Ctrl+C. The integration-test server terminates with the test JVM.
+- Surefire runs unit tests for URL validation, code generation, service behavior, and security configuration.
+- Failsafe starts real HTTP servers on random ports and exercises the full Spring Security filter chain against **real PostgreSQL**, not H2 or mock authentication.
+- Phase 2 HTTP tests now register an account and attach its bearer token to management requests; public redirect requests remain unauthenticated. Existing validation/collision/expiry coverage is retained.
+- Phase 1 persistence assertions are retained using the repository directly, rather than preserving unauthenticated service accessors.
+- New tests cover account normalization/BCrypt/login, owner isolation, pagination, activation, invalid JWTs, aliases/concurrency, legacy links, and CORS. A migration test creates a uniquely named schema, applies V1, inserts a legacy URL, applies V2, verifies preservation, and drops only that schema.
+- Persistence tests roll back. HTTP tests delete only their own tracked URLs/accounts; tables are never truncated. Identity sequences can advance. Flyway changes to the main schema persist.
+- No database tests are silently skipped. Use a local/development database whose user can create a temporary schema for the migration test.
 
-## Phase 2 API
+`./mvnw test` runs unit tests only; **use `clean verify` for acceptance**. Actual counts and results are in `docs/verification.md`. Reports are under `backend/target/{surefire-reports,failsafe-reports}/`.
 
-Use your configured port (8081 in the verified local `.env`). These examples assume `.env` has been exported in the calling shell:
+## Phase 3 API contract
+
+All request bodies are strict JSON: unknown fields, incorrect types, trailing JSON, and malformed bodies return **400**. Entities, password hashes, and database exceptions are never response DTOs.
+
+### Register and log in
+
+| Endpoint | Body | Success |
+| --- | --- | --- |
+| `POST /api/auth/register` | `email`, `password` | 201, JWT response |
+| `POST /api/auth/login` | `email`, `password` | 200, JWT response |
+
+Email is stripped of surrounding whitespace and lowercased with `Locale.ROOT` before validation and lookup; maximum length is 254. Normalized email uniqueness is enforced in PostgreSQL, including concurrent registrations. Passwords must be nonblank, 8–72 characters, and at most **72 UTF-8 bytes** (BCrypt's input limit); passwords are not trimmed or normalized. Only salted BCrypt hashes are persisted.
+
+Both endpoints return exactly `accessToken` (JWT string), `tokenType` (`Bearer`), `expiresIn` (seconds), and `email` (normalized). Responses have `Cache-Control: no-store`. Duplicate email returns **409 `EMAIL_IN_USE`**; wrong passwords and unknown accounts both return **401 `INVALID_CREDENTIALS`**.
+
+The backend uses Spring Security's `NimbusJwtEncoder` and OAuth2 resource-server `NimbusJwtDecoder`, restricted to **HS256**. Standard validators enforce the issuer, required expiration, expiration/not-before times with zero clock skew, and a numeric account subject. Management additionally requires that the subject still identify a persisted account. Tokens include `iss`, `sub`, `iat`, `nbf`, and `exp`; they contain no password/hash. There is no custom token filter or hand-written signature verification, no HTTP session, form login, or second authentication protocol.
+
+Send `Authorization: Bearer <accessToken>` for **every** `/api/urls` management request. Tokens in query strings are not accepted. CSRF is disabled because authentication is explicit bearer headers, not ambient cookie credentials. Invalid/missing tokens return JSON **401**, not an HTML login page. There are no refresh, password-reset, or server-side logout endpoints in this phase. Clients discard tokens at logout; a token otherwise remains valid until expiration (or signing-secret rotation).
+
+### URL creation and management
+
+| Endpoint | Authentication | Success and behavior |
+| --- | --- | --- |
+| `POST /api/urls` | Bearer required | 201 + URL DTO; `Location: /api/urls/{id}` |
+| `GET /api/urls?page=0&size=20` | Bearer required | 200 + owner-only page, newest ID first |
+| `GET /api/urls/{id}` | Owner only | 200 + URL DTO, including inactive/expired records |
+| `PATCH /api/urls/{id}` | Owner only | Body contains only Boolean `active`; 200 + updated URL DTO |
+| `DELETE /api/urls/{id}` | Owner only | 204, deactivates without deleting; idempotent for an owned record |
+| `GET /{shortCode}` | Public | 302 + original `Location`, empty body, `Cache-Control: no-store`, only when active and unexpired |
+
+Creation accepts required `originalUrl`, optional `customAlias`, and optional `expiresAt`. It creates an active URL owned by the JWT subject; passing `user`, `owner`, `userId`, `id`, or `active` in the creation JSON is not allowed.
+
+URL DTO fields remain `id`, `shortCode`, `shortUrl`, `originalUrl`, `createdAt`, `expiresAt`, and `active`. A page contains `content` (URL DTOs), `page`, `size`, `totalElements`, and `totalPages`. Defaults: page 0, size 20. Bounds: page 0–1,000,000, size 1–100; invalid values return **400 `INVALID_PARAMETER`**. Totals and page contents include only the requesting owner's URLs, including inactive/expired ones. Pages beyond available results have empty content.
+
+Missing, other-owner, and legacy-unowned IDs all return the same **404 `URL_NOT_FOUND`** for get/delete/patch. Ownership is queried in the service/repository, never inferred from a caller-supplied JSON owner. `ShortUrlService.requireOwned` is the common guard to reuse before future analytics reads. `/api/urls/{id}/analytics` is already covered by the authentication matcher but **has no endpoint yet**: authenticated callers get 404 and anonymous callers get 401.
+
+Example after saving a returned access token privately in the shell variable `TOKEN`:
 
 ```bash
 BASE="http://localhost:${SERVER_PORT:-8080}"
-curl -i "$BASE/api/urls" \
+curl -i "$BASE/api/urls" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"originalUrl":"https://example.com/some/long/path"}'
+  -d '{"originalUrl":"https://example.com/some/long/path","customAlias":"My_link-1","expiresAt":"2099-01-01T00:00:00Z"}'
+curl -i "$BASE/api/urls?page=0&size=20" -H "Authorization: Bearer $TOKEN"
+# Replace 1 with the returned id.
+curl -i -X PATCH "$BASE/api/urls/1" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"active":false}'
+curl -i "$BASE/My_link-1"
 ```
 
-Creation returns **201 Created**, `Location: /api/urls/{id}`, and a DTO like:
+### Alias, URL, and expiration rules
 
-```json
-{
-  "id": 1,
-  "shortCode": "a8K2xB9z",
-  "shortUrl": "http://localhost:8081/a8K2xB9z",
-  "originalUrl": "https://example.com/some/long/path",
-  "createdAt": "2026-09-26T12:00:00Z",
-  "expiresAt": null,
-  "active": true
-}
-```
+- Custom aliases are **3–32 ASCII characters**, restricted to `[A-Za-z0-9_-]`. No trimming or case conversion is performed. Lookup and uniqueness are **case-sensitive**: `MyLink` and `mylink` are distinct. Reserved names are checked **case-insensitively**.
+- Reserved names: `api`, `auth`, `login`, `register`, `logout`, `dashboard`, `analytics`, `actuator`, `error`, `_next`, `admin`, `health`, `metrics`, `static`, `assets`, `favicon`, `robots`, `sitemap`, `swagger-ui`, and `v3` (also too short under the length rule). Invalid/reserved aliases return **400 `INVALID_ALIAS`**.
+- Omitted/null `customAlias` uses an eight-character SecureRandom Base62 code. Empty aliases are invalid. Generated codes also avoid reserved names.
+- PostgreSQL's unchanged `uk_short_urls_short_code` uniqueness constraint covers both random codes and aliases globally. Each insert uses a separate `REQUIRES_NEW` transaction with `saveAndFlush`, so a unique-constraint failure rolls back before retrying. Random collisions retry at most ten times; an alias conflict immediately returns **409 `ALIAS_IN_USE`**. There is no exists-then-insert race and no overwrite/upsert. Inactive, expired, and legacy codes remain reserved.
+- `originalUrl` must be a nonblank syntactically valid absolute HTTP(S) URI with a valid host, no credentials, whitespace, or literal/encoded control characters. Malformed escapes and invalid ports are rejected. Localhost and IP hosts are accepted; use punycode for internationalized hosts. Validation does not resolve DNS or fetch destinations and does not guarantee reachability or trustworthiness.
+- `expiresAt` is absent/null or an ISO-8601 timestamp string with an offset. As in Phase 2, **past timestamps are intentionally accepted**; the resulting public link immediately returns **410 `URL_EXPIRED`**. Expiration is `expiresAt <= current time`, normalized to PostgreSQL microsecond precision. Reactivation does not bypass expiration. Inactive links return **410 `URL_INACTIVE`**.
 
-IDs, codes, and timestamps above are illustrative. Use the returned ID and code:
+### Existing URLs and schema upgrades
 
-```bash
-curl -i "$BASE/api/urls/1"
-curl -i "$BASE/a8K2xB9z"
-curl -i -X DELETE "$BASE/api/urls/1"
-curl -i "$BASE/a8K2xB9z"
-```
+V1 is unchanged. V2 adds the `users` table, a nullable foreign key `short_urls.user_id`, and an owner/list index. Existing rows retain their codes, destinations, timestamps, expiration, and active state. Their owner is **NULL**: active/unexpired links keep redirecting publicly, but no account can list, retrieve, modify, delete, or claim them through management APIs. New API-created URLs always have an authenticated owner. No data reset or arbitrary backfill account is required.
 
-| Endpoint | Success | Behavior |
-| --- | --- | --- |
-| `POST /api/urls` | 201 + metadata DTO | Creates a new active short URL; repeated destinations get independent codes |
-| `GET /{shortCode}` | 302 + `Location` | Redirects only active, unexpired URLs; `Cache-Control: no-store` prevents caching stale redirects |
-| `GET /api/urls/{id}` | 200 + metadata DTO | Retrieves metadata even for inactive/expired URLs |
-| `DELETE /api/urls/{id}` | 204, empty body | Deactivates without deleting; repeated deletion of an existing record remains 204 |
+### CORS and errors
 
-### Validation and expiration
+`CORS_ALLOWED_ORIGIN` permits exactly one frontend origin (default `http://localhost:3000`) on `/api/**`. Bearer `Authorization` and JSON `Content-Type` headers and the management methods are allowed; `Location` is exposed. Preflight needs no JWT. Credentials are **not** enabled, and origins cannot be wildcard patterns. Different ports, schemes, and lookalike hosts are rejected with JSON **403 `FORBIDDEN`**. CORS is a browser policy, not a substitute for authentication.
 
-- `originalUrl` must be a nonblank JSON string containing a syntactically valid absolute HTTP(S) URI, with a valid host and no credentials, literal or percent-encoded control characters.
-- Relative URLs, unsupported schemes, malformed percent escapes, invalid hosts/ports, whitespace, and user-info (`user:password@host`, including empty user-info) are rejected. Ports, if supplied, must be at most 65535.
-- Validation does **not** resolve DNS, fetch the destination, or promise that the destination is reachable or trustworthy. Localhost and syntactically valid IP hosts are accepted. Use punycode for internationalized hostnames.
-- Only `originalUrl` and optional `expiresAt` are accepted. Unknown fields (including `customAlias`), wrong JSON types, malformed JSON, and trailing JSON are rejected. Entities and database exceptions are never serialized in responses.
-- `expiresAt` is absent/null or an ISO-8601 timestamp string with an offset, for example `2099-01-01T00:00:00Z`. Past timestamps are intentionally accepted to allow testing expired links. A link is expired when `expiresAt <= current time`. Timestamps are normalized to PostgreSQL microsecond precision, truncating finer fractional digits.
-
-```bash
-curl -i "$BASE/api/urls" -H 'Content-Type: application/json' \
-  -d '{"originalUrl":"https://example.com/expired","expiresAt":"2000-01-01T00:00:00Z"}'
-# GET the returned /{shortCode}: 410 URL_EXPIRED, not a redirect.
-```
-
-### Consistent errors
-
-Errors use the same JSON structure, without SQL, database constraint names, stack traces, or entity internals:
-
-```json
-{
-  "timestamp": "2026-09-26T12:00:00Z",
-  "status": 404,
-  "code": "URL_NOT_FOUND",
-  "message": "The short URL was not found."
-}
-```
+All application, authentication/authorization, and CORS errors use the same four fields: `timestamp` (ISO instant), `status` (HTTP status number), `code`, and a sanitized `message`. No SQL, constraint details, stack traces, tokens, or hashes are included.
 
 | Status | Codes |
 | --- | --- |
-| 400 | `INVALID_BODY`, `INVALID_URL`, `INVALID_PARAMETER` |
-| 404 | `URL_NOT_FOUND` (unknown ID/code), `NOT_FOUND` (unknown route) |
-| 410 | `URL_INACTIVE`, `URL_EXPIRED` (redirect resolution only) |
+| 400 | `INVALID_BODY`, `INVALID_URL`, `INVALID_ALIAS`, `INVALID_PARAMETER` |
+| 401 | `UNAUTHORIZED`, `INVALID_CREDENTIALS` |
+| 403 | `FORBIDDEN` |
+| 404 | `URL_NOT_FOUND`, `NOT_FOUND` for unimplemented/unknown routes |
+| 409 | `EMAIL_IN_USE`, `ALIAS_IN_USE` |
+| 410 | `URL_INACTIVE`, `URL_EXPIRED` |
 | 405 / 415 | `METHOD_NOT_ALLOWED` / `UNSUPPORTED_MEDIA_TYPE` |
-| 503 | `CODE_GENERATION_UNAVAILABLE` after exhausting collision retries |
-| 500 | `INTERNAL_ERROR`, generic message for unexpected failures |
+| 503 | `CODE_GENERATION_UNAVAILABLE` after exhausting random-code attempts |
+| 500 | `INTERNAL_ERROR` for unexpected failures |
 
-### Collision-safe code generation
+## Phase 5 frontend integration plan (not implemented)
 
-`ShortCodeGenerator` uses `SecureRandom.nextInt(62)` to generate uniformly selected **eight-character Base62** codes (`0-9A-Za-z`). Randomness alone does not guarantee uniqueness: PostgreSQL's existing `uk_short_urls_short_code` constraint is authoritative.
-
-`ShortUrlService` attempts creation at most ten times. Every insert runs through a separate Spring-managed `ShortUrlWriter` bean using `REQUIRES_NEW` and `saveAndFlush`. The failed transaction is rolled back before the service retries, avoiding PostgreSQL's aborted-transaction trap. Only SQLSTATE `23505` on that exact short-code constraint is retried; other persistence failures produce a sanitized error. There is no race-prone exists-then-insert check. Inactive and expired codes remain reserved.
+Next.js will be a client of these Spring APIs, **not a second authentication system**. Login/register will consume the JWT response; the API client will attach `Authorization: Bearer` to URL create/list/get/patch/delete and, after Phase 4, analytics requests. Keep tokens in client memory for the initial implementation, clear them on logout/401, and require login again after reload/expiry. Do not expose `JWT_SECRET` as a `NEXT_PUBLIC_*` setting or add a separate NextAuth/session issuer. Requests use the configured backend origin without credentialed cookies. Dashboard and URL management screens will consume the page/URL DTOs and display the shared JSON error messages. No frontend files or dependencies are introduced in Phase 3.
 
 ## Layout and responsibilities
 
-- `backend/src/main/java/com/shortify/controller/`: thin HTTP/DTO adapters and redirect response construction.
-- `backend/src/main/java/com/shortify/service/`: validation, code generation, resolution rules, metadata mapping, transactional writes/deactivation; Phase 1 persistence accessors are retained.
-- `backend/src/main/java/com/shortify/{dto,exception,config}/`: request/response DTOs, global JSON errors, strict JSON configuration, and injectable UTC clock.
-- `backend/src/main/java/com/shortify/{entity,repository}/`: JPA mapping and persistence access.
-- `backend/src/main/resources/db/migration/`: versioned PostgreSQL schema; Phase 2 reuses the Phase 1 schema without modification.
-- `backend/src/test/java/com/shortify/`: PostgreSQL persistence and HTTP integration tests; `service/` contains unit tests.
+- `backend/src/main/java/com/shortify/controller/`: thin HTTP/DTO adapters.
+- `service/`: authentication, validation, collision-safe writes, owner-scoped management, and public resolution.
+- `security/` and `config/`: authenticated account lookup, shared JSON security errors, standard Nimbus/JWT configuration, CORS, strict JSON, and UTC clock.
+- `entity/`, `repository/`, and `dto/`: JPA persistence, owner-constrained queries, and explicit public DTOs.
+- `backend/src/main/resources/db/migration/`: versioned PostgreSQL schema.
+- `backend/src/test/java/com/shortify/`: unit, PostgreSQL persistence/migration, and actual HTTP integration tests.
 - `frontend/.gitkeep`: directory only; frontend work is deferred to Phase 5.
 
 ## Stop PostgreSQL
 
-From the repository root:
+From the repository root, `docker compose down` stops this project's database while preserving its volume. **`docker compose down -v` deletes the database data**; use it only for an intentional development reset.
 
-```bash
-docker compose down
-```
-
-The volume is preserved. `docker compose down -v` **deletes all project database data**; use it only when intentionally resetting this development database.
-
-See `phases.md` and `scope.md` for the approved boundaries. Do not begin Phase 3 until explicitly approved.
+See `phases.md` and `scope.md` for approved boundaries. Phase 4 requires separate implementation approval.

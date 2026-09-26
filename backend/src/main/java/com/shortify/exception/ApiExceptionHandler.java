@@ -30,12 +30,12 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentNotValidException.class})
     ResponseEntity<ApiError> handleBody(Exception exception) {
-        return error(HttpStatus.BAD_REQUEST, "INVALID_BODY", "A valid JSON body with originalUrl and optional expiresAt is required.");
+        return error(HttpStatus.BAD_REQUEST, "INVALID_BODY", "A valid JSON body with the required fields and types is required.");
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     ResponseEntity<ApiError> handleParameter(Exception exception) {
-        return error(HttpStatus.BAD_REQUEST, "INVALID_PARAMETER", "The URL id must be an integer.");
+        return error(HttpStatus.BAD_REQUEST, "INVALID_PARAMETER", "Request parameters must have the required types.");
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

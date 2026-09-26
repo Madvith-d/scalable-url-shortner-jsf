@@ -15,3 +15,9 @@ server:
 
 shortify:
   base-url: ${SHORTIFY_BASE_URL:http://localhost:${SERVER_PORT:8080}}
+  jwt:
+    secret: ${JWT_SECRET}
+    issuer: ${JWT_ISSUER:shortify}
+    expires-in: ${JWT_EXPIRES_IN:3600}
+  cors:
+    allowed-origin: ${CORS_ALLOWED_ORIGIN:http://localhost:3000}

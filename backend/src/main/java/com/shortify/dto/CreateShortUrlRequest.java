@@ -2,5 +2,5 @@ package com.shortify.dto;
 
 import jakarta.validation.constraints.NotBlank;
 
-public record CreateShortUrlRequest(@NotBlank String originalUrl, String expiresAt) {
+public record CreateShortUrlRequest(@NotBlank String originalUrl, String expiresAt, String customAlias) {
 }

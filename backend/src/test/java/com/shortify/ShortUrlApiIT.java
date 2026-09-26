@@ -21,9 +21,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shortify.entity.ShortUrl;
 import com.shortify.repository.ShortUrlRepository;
+import com.shortify.repository.UserRepository;
 import com.shortify.service.ShortCodeGenerator;
 import com.shortify.service.ShortUrlWriter;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -68,10 +70,29 @@ class ShortUrlApiIT {
     private final HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER)
             .connectTimeout(Duration.ofSeconds(10)).build();
 
+    @Autowired
+    private UserRepository users;
+
+    private String token;
+    private Long userId;
+
+    @BeforeEach
+    void registerOwner() throws Exception {
+        String email = UUID.randomUUID() + "@example.com";
+        HttpResponse<String> response = request("POST", "/api/auth/register",
+                mapper.writeValueAsString(Map.of("email", email, "password", "test-password-123")));
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(201);
+        token = mapper.readTree(response.body()).path("accessToken").asText();
+        userId = users.findByEmail(email).orElseThrow().getId();
+    }
+
     @AfterEach
     void cleanUpCommittedHttpRows() {
         reset(generator, writer);
         repository.deleteAllById(createdIds);
+        if (userId != null) {
+            users.deleteById(userId);
+        }
     }
 
     @Test
@@ -123,7 +144,7 @@ class ShortUrlApiIT {
     void rejectsInvalidUrlsWithJsonErrors(String original) throws Exception {
         assertError(request("POST", "/api/urls", mapper.writeValueAsString(Map.of("originalUrl", original))),
                 400, "INVALID_URL");
-        verify(writer, times(0)).insert(anyString(), anyString(), any());
+        verify(writer, times(0)).insert(anyString(), anyString(), any(), any());
     }
 
     @ParameterizedTest
@@ -131,7 +152,7 @@ class ShortUrlApiIT {
             "", "{", "null", "[]", "\"https://example.com\"", "{}", "{\"originalUrl\":null}",
             "{\"originalUrl\":\"\"}", "{\"originalUrl\":\"   \"}", "{\"originalUrl\":123}",
             "{\"originalUrl\":true}", "{\"originalUrl\":{}}", "{\"originalUrl\":[]}",
-            "{\"originalUrl\":\"https://example.com\",\"customAlias\":\"mine\"}",
+            "{\"originalUrl\":\"https://example.com\",\"userId\":123}",
             "{\"originalUrl\":\"https://example.com\",\"active\":false}",
             "{\"originalUrl\":\"https://example.com\"} {}",
             "{\"originalUrl\":\"https://example.com\",\"expiresAt\":123}",
@@ -142,7 +163,7 @@ class ShortUrlApiIT {
     })
     void rejectsMalformedBodiesAndUnsupportedFields(String body) throws Exception {
         assertError(request("POST", "/api/urls", body), 400, "INVALID_BODY");
-        verify(writer, times(0)).insert(anyString(), anyString(), any());
+        verify(writer, times(0)).insert(anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -166,7 +187,8 @@ class ShortUrlApiIT {
         assertError(request("DELETE", "/api/urls/9223372036854775808", null), 400, "INVALID_PARAMETER");
         assertError(request("GET", "/no/such/route", null), 404, "NOT_FOUND");
         assertError(request("PUT", "/api/urls", "{}"), 405, "METHOD_NOT_ALLOWED");
-        HttpRequest request = HttpRequest.newBuilder(uri("/api/urls")).header("Content-Type", "text/plain")
+        HttpRequest request = HttpRequest.newBuilder(uri("/api/urls")).header("Authorization", "Bearer " + token)
+                .header("Content-Type", "text/plain")
                 .POST(HttpRequest.BodyPublishers.ofString("bad body")).build();
         assertError(client.send(request, HttpResponse.BodyHandlers.ofString()), 415, "UNSUPPORTED_MEDIA_TYPE");
     }
@@ -260,7 +282,7 @@ class ShortUrlApiIT {
     @Test
     void unexpectedDatabaseFailureIsSanitizedAndNotRetried() throws Exception {
         doThrow(new DataIntegrityViolationException("secret SQL INSERT INTO short_urls password=hidden"))
-                .when(writer).insert(anyString(), anyString(), any());
+                .when(writer).insert(anyString(), anyString(), any(), any());
         HttpResponse<String> response = request("POST", "/api/urls", "{\"originalUrl\":\"https://example.com\"}");
         assertError(response, 500, "INTERNAL_ERROR");
         assertThat(response.body()).doesNotContain("secret", "SQL", "password", "hidden");
@@ -305,6 +327,9 @@ class ShortUrlApiIT {
 
     private HttpResponse<String> request(String method, String path, String body) throws Exception {
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri(path)).timeout(Duration.ofSeconds(30));
+        if (path.startsWith("/api/urls") && token != null) {
+            builder.header("Authorization", "Bearer " + token);
+        }
         if (body != null) {
             builder.header("Content-Type", "application/json");
         }

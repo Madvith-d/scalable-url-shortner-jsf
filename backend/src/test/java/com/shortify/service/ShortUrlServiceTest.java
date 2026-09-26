@@ -11,6 +11,7 @@ import com.shortify.dto.ShortUrlResponse;
 import com.shortify.entity.ShortUrl;
 import com.shortify.exception.UrlException;
 import com.shortify.repository.ShortUrlRepository;
+import com.shortify.security.CurrentUser;
 import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,19 +39,21 @@ class ShortUrlServiceTest {
     private final ShortUrlRepository repository = mock(ShortUrlRepository.class);
     private final ShortUrlWriter writer = mock(ShortUrlWriter.class);
     private final ShortCodeGenerator generator = mock(ShortCodeGenerator.class);
+    private final CurrentUser currentUser = mock(CurrentUser.class);
     private ShortUrlService service;
 
     @BeforeEach
     void setUp() {
+        when(currentUser.requireId()).thenReturn(7L);
         service = new ShortUrlService(repository, writer, generator, new OriginalUrlValidator(),
-                Clock.fixed(NOW, ZoneOffset.UTC), "https://sho.rt/");
+                currentUser, new CustomAliasValidator(), Clock.fixed(NOW, ZoneOffset.UTC), "https://sho.rt/");
     }
 
     @Test
     void createsActiveUrlAndMapsToDto() {
         when(generator.generate()).thenReturn("aB12cD34");
-        when(writer.insert("aB12cD34", ORIGINAL, null)).thenReturn(url(null, true));
-        ShortUrlResponse result = service.create(new CreateShortUrlRequest(ORIGINAL, null));
+        when(writer.insert("aB12cD34", ORIGINAL, null, 7L)).thenReturn(url(null, true));
+        ShortUrlResponse result = service.create(new CreateShortUrlRequest(ORIGINAL, null, null));
         assertThat(result.shortCode()).isEqualTo("aB12cD34");
         assertThat(result.shortUrl()).isEqualTo("https://sho.rt/aB12cD34");
         assertThat(result.originalUrl()).isEqualTo(ORIGINAL);
@@ -62,13 +65,13 @@ class ShortUrlServiceTest {
     @Test
     void passesOptionalExpirationToWriter() {
         when(generator.generate()).thenReturn("aB12cD34");
-        when(writer.insert("aB12cD34", ORIGINAL, NOW)).thenReturn(url(NOW, true));
-        assertThat(service.create(new CreateShortUrlRequest(ORIGINAL, NOW.toString())).expiresAt()).isEqualTo(NOW);
+        when(writer.insert("aB12cD34", ORIGINAL, NOW, 7L)).thenReturn(url(NOW, true));
+        assertThat(service.create(new CreateShortUrlRequest(ORIGINAL, NOW.toString(), null)).expiresAt()).isEqualTo(NOW);
     }
 
     @Test
     void rejectsInvalidUrlBeforeAllocatingCode() {
-        assertError(() -> service.create(new CreateShortUrlRequest("ftp://example.com", null)),
+        assertError(() -> service.create(new CreateShortUrlRequest("ftp://example.com", null, null)),
                 HttpStatus.BAD_REQUEST, "INVALID_URL");
         verifyNoInteractions(generator, writer, repository);
     }
@@ -76,7 +79,7 @@ class ShortUrlServiceTest {
     @ParameterizedTest
     @ValueSource(strings = {"", "tomorrow", "2026-09-26", "2026-09-26T12:00:00", "2026-13-01T00:00:00Z"})
     void rejectsMalformedExpirationBeforeWriting(String expiresAt) {
-        assertError(() -> service.create(new CreateShortUrlRequest(ORIGINAL, expiresAt)),
+        assertError(() -> service.create(new CreateShortUrlRequest(ORIGINAL, expiresAt, null)),
                 HttpStatus.BAD_REQUEST, "INVALID_BODY");
         verifyNoInteractions(generator, writer, repository);
     }
@@ -84,19 +87,19 @@ class ShortUrlServiceTest {
     @Test
     void retriesOnlyShortCodeUniqueConstraintViolation() {
         when(generator.generate()).thenReturn("collision", "aB12cD34");
-        when(writer.insert("collision", ORIGINAL, null)).thenThrow(violation("23505", "uk_short_urls_short_code"));
-        when(writer.insert("aB12cD34", ORIGINAL, null)).thenReturn(url(null, true));
-        assertThat(service.create(new CreateShortUrlRequest(ORIGINAL, null)).shortCode()).isEqualTo("aB12cD34");
+        when(writer.insert("collision", ORIGINAL, null, 7L)).thenThrow(violation("23505", "uk_short_urls_short_code"));
+        when(writer.insert("aB12cD34", ORIGINAL, null, 7L)).thenReturn(url(null, true));
+        assertThat(service.create(new CreateShortUrlRequest(ORIGINAL, null, null)).shortCode()).isEqualTo("aB12cD34");
         verify(generator, times(2)).generate();
     }
 
     @Test
     void boundsRetriesWhenCodesKeepColliding() {
         when(generator.generate()).thenReturn("collision");
-        when(writer.insert("collision", ORIGINAL, null)).thenThrow(violation("23505", "uk_short_urls_short_code"));
-        assertError(() -> service.create(new CreateShortUrlRequest(ORIGINAL, null)),
+        when(writer.insert("collision", ORIGINAL, null, 7L)).thenThrow(violation("23505", "uk_short_urls_short_code"));
+        assertError(() -> service.create(new CreateShortUrlRequest(ORIGINAL, null, null)),
                 HttpStatus.SERVICE_UNAVAILABLE, "CODE_GENERATION_UNAVAILABLE");
-        verify(writer, times(ShortUrlService.MAX_ATTEMPTS)).insert("collision", ORIGINAL, null);
+        verify(writer, times(ShortUrlService.MAX_ATTEMPTS)).insert("collision", ORIGINAL, null, 7L);
         verify(generator, times(ShortUrlService.MAX_ATTEMPTS)).generate();
     }
 
@@ -147,7 +150,7 @@ class ShortUrlServiceTest {
 
     @Test
     void managementCanReadInactiveExpiredUrl() {
-        when(repository.findById(42L)).thenReturn(Optional.of(url(NOW.minusSeconds(1), false)));
+        when(repository.findByIdAndUserId(42L, 7L)).thenReturn(Optional.of(url(NOW.minusSeconds(1), false)));
         assertThat(service.get(42L).active()).isFalse();
         assertThat(service.get(42L).expiresAt()).isBefore(NOW);
     }
@@ -161,12 +164,42 @@ class ShortUrlServiceTest {
     @Test
     void deactivationIsIdempotentAndDoesNotDeleteRow() {
         ShortUrl url = url(null, true);
-        when(repository.findById(42L)).thenReturn(Optional.of(url));
+        when(repository.findByIdAndUserId(42L, 7L)).thenReturn(Optional.of(url));
         service.deactivate(42L);
         service.deactivate(42L);
         assertThat(url.isActive()).isFalse();
         verify(repository, never()).delete(any());
         verify(repository, never()).deleteById(any());
+    }
+
+    @Test
+    void generatedCodesSkipReservedPaths() {
+        when(generator.generate()).thenReturn("ReGiStEr", "aB12cD34");
+        when(writer.insert("aB12cD34", ORIGINAL, null, 7L)).thenReturn(url(null, true));
+        assertThat(service.create(new CreateShortUrlRequest(ORIGINAL, null, null)).shortCode()).isEqualTo("aB12cD34");
+        verify(writer, never()).insert("ReGiStEr", ORIGINAL, null, 7L);
+        verify(generator, times(2)).generate();
+    }
+
+    @Test
+    void customAliasCollisionReturnsConflictWithoutRetryingOrGenerating() {
+        when(writer.insert("My_Alias", ORIGINAL, null, 7L)).thenThrow(violation("23505", "uk_short_urls_short_code"));
+        assertError(() -> service.create(new CreateShortUrlRequest(ORIGINAL, null, "My_Alias")),
+                HttpStatus.CONFLICT, "ALIAS_IN_USE");
+        verify(writer).insert("My_Alias", ORIGINAL, null, 7L);
+        verifyNoInteractions(generator);
+    }
+
+    @Test
+    void serviceRequiresAuthenticatedOwnerForEveryManagementOperation() {
+        when(currentUser.requireId()).thenThrow(new UrlException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "Authentication is required."));
+        assertError(() -> service.create(new CreateShortUrlRequest(ORIGINAL, null, null)), HttpStatus.UNAUTHORIZED, "UNAUTHORIZED");
+        assertError(() -> service.get(42L), HttpStatus.UNAUTHORIZED, "UNAUTHORIZED");
+        assertError(() -> service.deactivate(42L), HttpStatus.UNAUTHORIZED, "UNAUTHORIZED");
+        assertError(() -> service.update(42L, true), HttpStatus.UNAUTHORIZED, "UNAUTHORIZED");
+        assertError(() -> service.list(0, 20), HttpStatus.UNAUTHORIZED, "UNAUTHORIZED");
+        assertError(() -> service.requireOwned(42L), HttpStatus.UNAUTHORIZED, "UNAUTHORIZED");
+        verifyNoInteractions(repository, writer, generator);
     }
 
     private ShortUrl url(Instant expiresAt, boolean active) {
@@ -180,8 +213,8 @@ class ShortUrlServiceTest {
 
     private void assertNonRetriable(DataIntegrityViolationException exception) {
         when(generator.generate()).thenReturn("aB12cD34");
-        when(writer.insert(anyString(), eq(ORIGINAL), eq(null))).thenThrow(exception);
-        assertThatThrownBy(() -> service.create(new CreateShortUrlRequest(ORIGINAL, null))).isSameAs(exception);
+        when(writer.insert(anyString(), eq(ORIGINAL), eq(null), eq(7L))).thenThrow(exception);
+        assertThatThrownBy(() -> service.create(new CreateShortUrlRequest(ORIGINAL, null, null))).isSameAs(exception);
         verify(generator).generate();
     }
 

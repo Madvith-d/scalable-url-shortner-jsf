@@ -8,7 +8,7 @@ import java.util.UUID;
 import javax.sql.DataSource;
 
 import com.shortify.entity.ShortUrl;
-import com.shortify.service.ShortUrlService;
+import com.shortify.repository.ShortUrlRepository;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ShortUrlPersistenceIT {
 
     @Autowired
-    private ShortUrlService service;
+    private ShortUrlRepository repository;
 
     @Autowired
     private EntityManager entityManager;
@@ -49,11 +49,11 @@ class ShortUrlPersistenceIT {
         String shortCode = newShortCode();
         Instant beforeSave = Instant.now().minusSeconds(1);
         Instant expiresAt = Instant.parse("2030-01-01T12:00:00Z");
-        ShortUrl saved = service.save(new ShortUrl(shortCode, "https://example.com/long/path", expiresAt, true));
+        ShortUrl saved = repository.save(new ShortUrl(shortCode, "https://example.com/long/path", expiresAt, true));
         entityManager.flush();
         entityManager.clear();
 
-        ShortUrl retrieved = service.findById(saved.getId()).orElseThrow();
+        ShortUrl retrieved = repository.findById(saved.getId()).orElseThrow();
         assertThat(retrieved).isNotSameAs(saved);
         assertThat(retrieved.getId()).isPositive();
         assertThat(retrieved.getShortCode()).isEqualTo(shortCode);
@@ -63,17 +63,17 @@ class ShortUrlPersistenceIT {
         assertThat(retrieved.isActive()).isTrue();
 
         entityManager.clear();
-        assertThat(service.findByShortCode(shortCode)).hasValueSatisfying(found ->
+        assertThat(repository.findByShortCode(shortCode)).hasValueSatisfying(found ->
                 assertThat(found.getId()).isEqualTo(saved.getId()));
     }
 
     @Test
     void persistsOptionalExpirationAndExplicitInactiveStatus() {
-        ShortUrl saved = service.save(new ShortUrl(newShortCode(), "https://example.com", null, false));
+        ShortUrl saved = repository.save(new ShortUrl(newShortCode(), "https://example.com", null, false));
         entityManager.flush();
         entityManager.clear();
 
-        ShortUrl retrieved = service.findById(saved.getId()).orElseThrow();
+        ShortUrl retrieved = repository.findById(saved.getId()).orElseThrow();
         assertThat(retrieved.getExpiresAt()).isNull();
         assertThat(retrieved.isActive()).isFalse();
     }
@@ -81,11 +81,11 @@ class ShortUrlPersistenceIT {
     @Test
     void rejectsDuplicateShortCodesInPostgreSql() {
         String shortCode = newShortCode();
-        service.save(new ShortUrl(shortCode, "https://example.com/first", null, true));
+        repository.save(new ShortUrl(shortCode, "https://example.com/first", null, true));
         entityManager.flush();
         entityManager.clear();
 
-        assertThatThrownBy(() -> service.save(
+        assertThatThrownBy(() -> repository.save(
                 new ShortUrl(shortCode, "https://example.com/second", null, true)))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
@@ -106,7 +106,7 @@ class ShortUrlPersistenceIT {
 
     @Test
     void returnsEmptyForUnknownShortCode() {
-        assertThat(service.findByShortCode(newShortCode())).isEmpty();
+        assertThat(repository.findByShortCode(newShortCode())).isEmpty();
     }
 
     private String newShortCode() {

@@ -5,9 +5,12 @@ import java.time.temporal.ChronoUnit;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.NotBlank;
@@ -38,6 +41,15 @@ public class ShortUrl {
 
     @Column(nullable = false)
     private boolean active;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", updatable = false)
+    private User user;
+
+    public ShortUrl(String shortCode, String originalUrl, Instant expiresAt, boolean active, User user) {
+        this(shortCode, originalUrl, expiresAt, active);
+        this.user = user;
+    }
 
     protected ShortUrl() {
     }
@@ -76,6 +88,14 @@ public class ShortUrl {
 
     public boolean isActive() {
         return active;
+    }
+
+    public User getUser() {
+        return user;
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
     }
 
     public void deactivate() {
