@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { draftPayload, emptyDraft, formatDate, linkStatus, readDraft, readSession, safeNext, tokenDeadline, validateCredentials, validateDraft } from "../../lib/helpers.ts";
 
 const now = Date.parse("2026-09-26T12:00:00Z");
-const draft = { originalUrl: "https://example.com/a?b=c#section", customAlias: "", expiresAt: "" };
+const draft = { ...emptyDraft, originalUrl: "https://example.com/a?b=c#section" };
 const jwt = (exp: number) => `header.${Buffer.from(JSON.stringify({ exp })).toString("base64url")}.signature`;
 
 describe("link status and dates", () => {
@@ -86,6 +86,28 @@ describe("guest drafts and strict creation payloads", () => {
     assert.deepEqual(draftPayload({ ...draft, customAlias: "MyLink", expiresAt: "2027-01-01T12:00:00+02:00" }), {
       originalUrl: draft.originalUrl, customAlias: "MyLink", expiresAt: "2027-01-01T10:00:00.000Z",
     });
+  });
+});
+
+describe("scheduled activation and click caps", () => {
+  it("preserves policy drafts and serializes local dates as UTC", () => {
+    const policy = { ...draft, activatesAt: "2027-01-01T12:00:00+02:00", maxClicks: "12" };
+    assert.deepEqual(readDraft(JSON.stringify(policy)), policy);
+    assert.deepEqual(draftPayload(policy), { originalUrl: draft.originalUrl, activatesAt: "2027-01-01T10:00:00.000Z", maxClicks: 12 });
+    assert.equal(validateDraft(policy), null);
+  });
+  it("rejects invalid schedules and non-positive or fractional caps", () => {
+    for (const activatesAt of ["invalid", "0000-01-01T00:00:00Z"]) assert.ok(validateDraft({ ...draft, activatesAt }));
+    for (const maxClicks of ["0", "-1", "1.5", "1e3", "abc", "9007199254740992"]) assert.ok(validateDraft({ ...draft, maxClicks }));
+    assert.ok(validateDraft({ ...draft, activatesAt: "2027-01-01T12:00", expiresAt: "2027-01-01T12:00" }));
+    assert.ok(validateDraft({ ...draft, activatesAt: "2027-01-02T12:00", expiresAt: "2027-01-01T12:00" }));
+  });
+  it("switches scheduled status at the exact boundary and displays exhausted caps", () => {
+    const link = { active: true, expiresAt: null, activatesAt: new Date(now).toISOString(), maxClicks: 2, clickCount: 0 };
+    assert.equal(linkStatus(link, now - 1), "Scheduled");
+    assert.equal(linkStatus(link, now), "Active");
+    assert.equal(linkStatus({ ...link, clickCount: 2 }, now), "Capped");
+    assert.equal(linkStatus({ ...link, active: false }, now), "Inactive");
   });
 });
 

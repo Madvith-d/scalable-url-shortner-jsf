@@ -32,6 +32,9 @@ class OwnershipMigrationIT extends RedisIntegrationSupport {
                     + "VALUES (?, '2026-01-02T03:04:05Z', 'example.com', 'Mobile', 'Legacy region')", urlId);
             var before = jdbc.queryForMap("SELECT * FROM " + schema + ".click_events");
             Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).load().migrate();
+            var migratedUrl = jdbc.queryForMap("SELECT * FROM " + schema + ".short_urls WHERE id = ?", urlId);
+            assertThat(migratedUrl).containsEntry("activates_at", null).containsEntry("max_clicks", null)
+                    .containsEntry("click_count", 1L);
             var after = jdbc.queryForMap("SELECT * FROM " + schema + ".click_events");
             assertThat(after).containsAllEntriesOf(before).containsEntry("country_code", null).containsEntry("city", null);
             assertThat(after).hasSize(before.size() + 2);
@@ -61,7 +64,8 @@ class OwnershipMigrationIT extends RedisIntegrationSupport {
             assertThat(rows).hasSize(1);
             assertThat(rows.getFirst()).containsEntry("short_code", "oldCode")
                     .containsEntry("original_url", "https://example.com/old")
-                    .containsEntry("active", true).containsEntry("user_id", null).containsEntry("expires_at", null);
+                    .containsEntry("active", true).containsEntry("user_id", null).containsEntry("expires_at", null)
+                    .containsEntry("activates_at", null).containsEntry("max_clicks", null).containsEntry("click_count", 0L);
             assertThat(jdbc.queryForObject("SELECT count(*) FROM " + schema + ".users", Long.class)).isZero();
         } finally {
             jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");

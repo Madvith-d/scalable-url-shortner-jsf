@@ -2,7 +2,7 @@
 
 A URL shortening and click analytics platform built with **Java 21, Spring Boot, Next.js, TypeScript, PostgreSQL, and Redis**. The backend is a layered modular monolith: controllers → services → Spring Data JPA repositories. Spring Security issues and validates JWTs; Next.js is a client of the backend API, not a separate authentication system.
 
-Create short links with optional aliases and expiration, manage your own links, and view click totals, daily activity, referrers, devices, and available geography. Public redirects use Redis with PostgreSQL fallback. Rate limiting, asynchronous click processing, and scheduled expiration cleanup use Redis and Spring mechanisms—no microservices, Kafka, or cloud infrastructure.
+Create short links with optional aliases, scheduled activation, expiration, and click caps; generate/download/share QR codes, manage your own links, and view click totals, daily activity, referrers, devices, and available geography. Public redirects use Redis with PostgreSQL fallback. Rate limiting, asynchronous click processing, and scheduled expiration cleanup use Redis and Spring mechanisms—no microservices, Kafka, or cloud infrastructure.
 
 Use TLS before exposing bearer tokens outside local development. Read the cache consistency, outage, and best-effort analytics limitations below before deployment. The approved requirements remain in `phases.md` and `scope.md`; executed checks are recorded in [`docs/verification.md`](docs/verification.md).
 
@@ -133,11 +133,11 @@ Send `Authorization: Bearer <accessToken>` for **every** `/api/urls` management 
 | `GET /api/urls/{id}` | Owner only | 200 + URL DTO, including inactive/expired records |
 | `PATCH /api/urls/{id}` | Owner only | Body contains only Boolean `active`; 200 + updated URL DTO |
 | `DELETE /api/urls/{id}` | Owner only | 204, deactivates without deleting; idempotent for an owned record |
-| `GET /{shortCode}` | Public | 302 + original `Location`, empty body, `Cache-Control: no-store`, only when active and unexpired |
+| `GET /{shortCode}` | Public | 302 + original `Location`, empty body, `Cache-Control: no-store`, only when active, within its schedule, unexpired, and below its click cap |
 
-Creation accepts required `originalUrl`, optional `customAlias`, and optional `expiresAt`. It creates an active URL owned by the JWT subject; passing `user`, `owner`, `userId`, `id`, or `active` in the creation JSON is not allowed.
+Creation accepts required `originalUrl`, optional `customAlias`, optional `expiresAt`, optional `activatesAt`, and optional `maxClicks`. It creates an active URL owned by the JWT subject; passing `user`, `owner`, `userId`, `id`, or `active` in the creation JSON is not allowed.
 
-URL DTO fields remain `id`, `shortCode`, `shortUrl`, `originalUrl`, `createdAt`, `expiresAt`, and `active`. A page contains `content` (URL DTOs), `page`, `size`, `totalElements`, and `totalPages`. Defaults: page 0, size 20. Bounds: page 0–1,000,000, size 1–100; invalid values return **400 `INVALID_PARAMETER`**. Totals and page contents include only the requesting owner's URLs, including inactive/expired ones. Pages beyond available results have empty content.
+URL DTO fields are `id`, `shortCode`, `shortUrl`, `originalUrl`, `createdAt`, `expiresAt`, `active`, `activatesAt`, `maxClicks`, and `clickCount`. A page contains `content` (URL DTOs), `page`, `size`, `totalElements`, and `totalPages`. Defaults: page 0, size 20. Bounds: page 0–1,000,000, size 1–100; invalid values return **400 `INVALID_PARAMETER`**. Totals and page contents include only the requesting owner's URLs, including inactive/expired ones. Pages beyond available results have empty content.
 
 Missing, other-owner, and legacy-unowned IDs all return the same **404 `URL_NOT_FOUND`** for get/delete/patch/analytics. Ownership is queried in the service/repository, never inferred from a caller-supplied JSON owner. Analytics uses the same `ShortUrlService.requireOwned` guard; anonymous callers get 401.
 
@@ -164,6 +164,27 @@ curl -i "$BASE/My_link-1"
 - `originalUrl` must be a nonblank syntactically valid absolute HTTP(S) URI with a valid host, no credentials, whitespace, or literal/encoded control characters. Malformed escapes and invalid ports are rejected. Localhost and IP hosts are accepted; use punycode for internationalized hosts. Validation does not resolve DNS or fetch destinations and does not guarantee reachability or trustworthiness.
 - `expiresAt` is absent/null or an ISO-8601 timestamp string with an offset, within UTC calendar years 0001–9999. As in Phase 2, **past timestamps are intentionally accepted**; the resulting public link immediately returns **410 `URL_EXPIRED`**. Expiration is `expiresAt <= current time`, normalized to PostgreSQL microsecond precision. Reactivation does not bypass expiration. Inactive links return **410 `URL_INACTIVE`**.
 
+### Scheduled activation, click caps, and QR sharing
+
+Example creation body:
+
+```json
+{
+  "originalUrl": "https://example.com/campaign",
+  "activatesAt": "2027-01-01T09:00:00Z",
+  "expiresAt": "2027-02-01T00:00:00Z",
+  "maxClicks": 100
+}
+```
+
+- `activatesAt` is absent/null for immediate activation, otherwise an offset-bearing ISO-8601 timestamp (UTC years 0001–9999, microsecond precision). Past activation times are accepted. It must precede expiration if both are present. Before this instant, redirects return **404 `URL_NOT_ACTIVE_YET`**; at the exact instant they become eligible without a scheduler tick. The UI accepts local time and sends UTC.
+- `maxClicks` is absent/null for unlimited redirects, otherwise a JSON integer from 1 through 9007199254740991. Strings, fractions, zero, and negatives return **400 `INVALID_BODY`**. Once exhausted, GET and HEAD return **410 `URL_CLICK_CAP_REACHED`**.
+- Every accepted GET atomically increments `short_urls.click_count` in PostgreSQL before sending the redirect, including repeat visits and bots. Concurrent requests across instances cannot exceed the cap. HEAD, rejected redirects, management reads, and QR generation do not consume it. A connection lost after admission may still count; this is an admitted-redirect count, not a unique visitor or verified destination-load count.
+- This counter is independent of best-effort analytics. It survives Redis failures, restarts, and dropped analytics events; analytics totals can be lower. PostgreSQL failure fails closed rather than allowing an uncounted redirect. This adds one synchronous database UPDATE per accepted GET and a database read for HEAD, even on cache hits.
+- Manual deactivation always wins. Reactivation does not bypass the schedule/expiration/cap or reset counts. Schedule and cap are set at creation; PATCH continues to accept only `active`.
+- **QR & share** is available in creation results, dashboard rows, and link details, including previously created links. QR codes encode the exact short URL (not its destination), are generated locally with no third-party QR requests, and download as PNG. Web Share supports links and, where available, PNG files. Unsupported browsers offer clipboard/manual copying and PNG download. Native sharing generally requires HTTPS or localhost. QR scans follow the same redirect rules.
+- Flyway **V5** adds nullable activation/cap fields and a durable nonnegative counter, preserving existing links. Existing recorded click events seed the counter; historical dropped events cannot be recovered. Restart/rebuild the backend to apply V5 automatically, and rebuild the frontend for the new controls. Old binaries must not serve redirects alongside the new version because they do not enforce caps.
+
 ### Existing URLs and schema upgrades
 
 V1 is unchanged. V2 adds the `users` table, a nullable foreign key `short_urls.user_id`, and an owner/list index. Existing rows retain their codes, destinations, timestamps, expiration, and active state. Their owner is **NULL**: active/unexpired links keep redirecting publicly, but no account can list, retrieve, modify, delete, or claim them through management APIs. New API-created URLs always have an authenticated owner. No data reset or arbitrary backfill account is required.
@@ -179,9 +200,9 @@ All application, authentication/authorization, and CORS errors use the same four
 | 400 | `INVALID_BODY`, `INVALID_URL`, `INVALID_ALIAS`, `INVALID_PARAMETER`, `INVALID_GEOGRAPHY_SELECTOR` |
 | 401 | `UNAUTHORIZED`, `INVALID_CREDENTIALS` |
 | 403 | `FORBIDDEN` |
-| 404 | `URL_NOT_FOUND`, `NOT_FOUND` for unimplemented/unknown routes |
-| 409 | `EMAIL_IN_USE`, `ALIAS_IN_USE` |
-| 410 | `URL_INACTIVE`, `URL_EXPIRED` |
+| 404 | `URL_NOT_FOUND`, `URL_NOT_ACTIVE_YET`, `NOT_FOUND` for unimplemented/unknown routes |
+| 409 | `EMAIL_IN_USE`, `ALIAS_IN_USE`, `URL_STATE_CHANGED` (retry after a concurrent availability change) |
+| 410 | `URL_INACTIVE`, `URL_EXPIRED`, `URL_CLICK_CAP_REACHED` |
 | 405 / 415 | `METHOD_NOT_ALLOWED` / `UNSUPPORTED_MEDIA_TYPE` |
 | 429 | `RATE_LIMITED` with `Retry-After` |
 | 503 | `CODE_GENERATION_UNAVAILABLE` or `RATE_LIMIT_UNAVAILABLE` (with `Retry-After`) |
@@ -209,18 +230,18 @@ V3 adds `click_events` (URL foreign key, access timestamp, referrer host, device
 
 - Referrers retain only a lowercase HTTP(S) URI host: credentials, port, path, query, and fragment are removed. Missing referrers are `Direct`; malformed/non-HTTP(S)/oversized values are `Unknown`.
 - User agents are reduced immediately to `Bot`, `Tablet`, `Mobile`, `Desktop`, or `Unknown`. Raw user agents and HTTP request objects are never queued. A validated public IP may be held transiently in the bounded in-memory analytics queue/worker for country/city lookup; it is never stored in PostgreSQL, Redis, application logs, or analytics responses. No visitor hash or unique-visitor tracking is added.
-- Geography uses a local city database first and an optional paid HTTPS fallback. Only country code and city are persisted, never coordinates or full provider responses. Unknown, private/local addresses, historical clicks, and unsuccessful lookups display `Unknown`. Arbitrary geography headers are always ignored; forwarded IPs are used only through explicitly trusted proxy CIDRs. See the geolocation setup below.
+- Geography uses a local city database first, then a paid HTTPS provider if keyed or the configurable keyless HTTPS fallback otherwise. Only country code and city are persisted, never coordinates or full provider responses. Unknown, private/local addresses, historical clicks, and unsuccessful lookups display `Unknown`. Arbitrary geography headers are always ignored; forwarded IPs are used only through explicitly trusted proxy CIDRs. See the geolocation setup below.
 - Spring's `analyticsExecutor` uses a fixed worker maximum and bounded queue, with `AbortPolicy`, never caller-runs or blocking queue insertion. Rejection and persistence failure drop the event, increment `AnalyticsService.droppedCount()`, and emit a sanitized warning on the first and every 100th drop. There is no public metrics API.
 - Analytics is best effort, not a durable queue: saturation, DB failure, shutdown timeout, or process crashes can lose events. Shutdown allows up to ten seconds to drain. Aggregate bucket cardinality can grow with history; no BI/range/export/retention feature is added.
 - Cleanup runs automatically after each configured fixed delay, one transaction and at most one batch per tick. PostgreSQL `FOR UPDATE SKIP LOCKED` allows concurrent workers without selecting locked rows. It marks expired active URLs inactive and invalidates after commit. A backlog takes multiple ticks; redirect expiry checks do not wait for cleanup.
 
 ### Cache consistency and outage policy
 
-Spring Data Redis caches URL ID, destination, active flag, expiration, and an absolute validity deadline. Public cache hits do not query PostgreSQL **for resolution**; the separate asynchronous click INSERT is expected. Misses load PostgreSQL. Every hit still checks active/expiry; expiry is exclusive (`expiresAt <= now` is gone). Redis entry TTL and the serialized deadline are bounded by both `CACHE_TTL` and URL expiration and are never extended on hits.
+Spring Data Redis caches URL ID, destination, active flag, activation time, expiration, and an absolute validity deadline. Cache hits avoid a destination lookup, but every eligible redirect now performs authoritative PostgreSQL admission (an atomic GET counter UPDATE or a HEAD availability read), in addition to any asynchronous analytics INSERT. Misses load PostgreSQL. Every hit still checks active/schedule/expiry; expiry is exclusive (`expiresAt <= now` is gone). Redis entry TTL and the serialized deadline are bounded by both `CACHE_TTL` and URL expiration and are never extended on hits.
 
 PATCH, DELETE/deactivation, and scheduled cleanup publish transaction events; only **AFTER_COMMIT** invalidates. Rollbacks leave the cache unchanged. Invalidation atomically rotates a per-code random generation and deletes data. A miss samples generation before loading PostgreSQL; a Lua compare-and-set permits population only if that generation is unchanged. Generation markers expire after twice the maximum cache lifetime; a slow loader cannot write after its original absolute deadline. This prevents an in-flight pre-mutation miss from repopulating after a successful invalidation. Redis is configured without eviction/persistence locally; generation loss through eviction/restart is treated as degraded consistency, still bounded by the absolute deadline.
 
-**This is bounded-staleness, not linearizable invalidation.** A redirect already in flight may finish with its prior snapshot. If Redis invalidation fails, the committed mutation still succeeds; another instance or a recovered Redis may serve its old cache until the original deadline, **at most 30 seconds by default (configurable up to five minutes)**, never indefinitely. Hits cannot refresh this deadline. The same bound covers a process crash between DB commit and invalidation, or lost generation metadata. There is no transactional Redis/PostgreSQL outbox, delivery retry, or instant multi-instance guarantee. Keep instance clocks synchronized. Direct SQL mutations bypass events and have the same TTL bound.
+**Cache invalidation is bounded-staleness, not linearizable.** A redirect already admitted may finish after a concurrent deactivation. Authoritative database admission prevents stale cache entries from bypassing deactivation, schedules, expiration, or caps. If invalidation fails after reactivation, a stale inactive cache entry can still reject requests until its original deadline, **at most 30 seconds by default (configurable up to five minutes)**, never indefinitely. Hits cannot refresh this deadline. The same bound covers a process crash between DB commit and invalidation, or lost generation metadata. There is no transactional Redis/PostgreSQL outbox, delivery retry, or instant multi-instance guarantee. Keep instance clocks synchronized. Direct SQL mutations bypass events and have the same TTL bound.
 
 Redis read/write errors or corrupt payloads fall back to PostgreSQL; cache failures are counted internally and logged without sensitive payloads on the first/every 100th failure. Redis connect and command timeouts are 500 ms each, so outages can increase request latency. Cache fallback does not disable request protection:
 
@@ -266,7 +287,8 @@ It returns `{ "totalClicks": 12, "buckets": [{ "label": "US", "clicks": 8 }] }`,
 | `GEO_ENABLED` | `true` | Enable lookup; false skips address extraction and records Unknown |
 | `GEO_DATABASE_PATH` | Empty | Native backend path to a readable MaxMind-compatible city MMDB file |
 | `GEO_DATABASE_FILE` | Unset | Host MMDB file mounted by the optional Compose override |
-| `GEO_API_KEY` | Empty | Paid ip-api HTTPS key; empty disables external lookup |
+| `GEO_API_KEY` | Empty | Paid ip-api HTTPS key; when set, takes precedence over the free fallback |
+| `GEO_FREE_FALLBACK_ENABLED` | `true` | Use keyless ipwho.is HTTPS lookup when no paid key exists and local city data is missing |
 | `GEO_TRUSTED_PROXIES` | Empty | Comma-separated trusted proxy CIDRs, for analytics IP extraction only |
 
 1. Obtain a city database, such as **GeoLite2 City**, through [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data/), following its account, license, attribution, and update requirements. Keep the file outside Git. For a native backend set `GEO_DATABASE_PATH` to the downloaded file. The reader is reused until application restart; restart after replacing the file to load updates.
@@ -277,8 +299,9 @@ It returns `{ "totalClicks": 12, "buckets": [{ "label": "US", "clicks": 8 }] }`,
    ```
 
    The optional override mounts the existing file read-only and sets the container path. A missing source file fails the mount rather than creating an empty directory. The default Compose file remains usable without any database.
-3. To enable the fallback, put a paid ip-api key in `GEO_API_KEY` in the ignored server-side `.env`. Never place it in `NEXT_PUBLIC_*`, frontend files, committed configuration, or chat. External lookup is used when local city data is missing; only `status`, `countryCode`, and `city` are requested over HTTPS, with a maximum 1.5-second timeout and no per-click retry. The free HTTP endpoint is not used. The provider receives the visitor IP for these lookups; account for that disclosure in your privacy notice and applicable data-processing requirements.
-4. With neither a readable database nor a key, the app still starts and records Unknown. Missing/corrupt local data and failed remote lookups do not stop redirects; any usable local country is retained when the fallback fails. Provider errors/rate limits trigger temporary backoff.
+3. Without a paid key, the enabled-by-default **ipwho.is HTTPS fallback** requests only `success`, `country_code`, and `city`, so public-IP lookups work without provisioning a database/key. **It sends the visitor's public IP to an external provider.** Set `GEO_FREE_FALLBACK_ENABLED=false` for local-only operation without a key. Review [ipwho.is usage terms and limits](https://ipwhois.io/): the free service is intended for non-commercial use; use a licensed local database or paid provider for production/commercial workloads as appropriate. Disclose external processing in your privacy notice.
+4. To use paid ip-api instead, put its key in `GEO_API_KEY` in the ignored server-side `.env`. Never place it in `NEXT_PUBLIC_*`, frontend files, committed configuration, or chat. Only `status`, `countryCode`, and `city` are requested over HTTPS. Both external modes have a maximum 1.5-second timeout and no per-click retry. The free **HTTP** ip-api endpoint is never used. A configured paid key does not silently fail over to another provider.
+5. With the free fallback disabled and neither a readable database nor a key, the app starts but records Unknown and warns that no lookup source exists. Missing/corrupt local data and failed remote lookups do not stop redirects; any usable local country is retained when fallback fails. Provider errors/rate limits trigger temporary backoff, with sanitized warnings (no visitor IPs, keys, or response bodies). Historical Unknown events cannot be backfilled because raw IPs were never stored.
 
 Lookups run on the bounded analytics worker **before** its database insert transaction, never on the redirect thread. Outbound fallback is limited to one request per process with no additional request queue; concurrent excess lookups retain local data or Unknown. Responses are limited to 8 KiB, and failures back off from 60 seconds up to 15 minutes (numeric provider retry delays are honored up to 24 hours). Slow providers may delay analytics or fill the bounded queue, but do not turn geolocation into synchronous redirect latency. Existing best-effort/drop behavior still applies. Redirects remain HTTP **302**, and HEAD does not record a click.
 
@@ -307,7 +330,7 @@ Routes:
 - `/`: URL creation; guests can keep their destination while signing in.
 - `/login` and `/register`: backend account authentication.
 - `/dashboard`: paginated owner-only links and creation form.
-- `/urls/{id}`: destination, expiration, short URL copying, and activation/deactivation.
+- `/urls/{id}`: destination, availability schedule/cap/count, QR generation/sharing, short URL copying, and activation/deactivation.
 - `/urls/{id}/analytics`: total clicks, daily activity, referrers, devices, and geography.
 
 Next.js consumes the Spring JWT and sends bearer headers. Tokens live in per-tab `sessionStorage` and client memory, persist across a reload in that tab, and are cleared at logout or session expiry. There is no refresh token or independent frontend identity system. Session storage is readable by JavaScript: an XSS vulnerability could expose a token. Use TLS, keep dependencies updated, and never render untrusted HTML. Logging out discards the local token; it does not revoke copies held elsewhere.

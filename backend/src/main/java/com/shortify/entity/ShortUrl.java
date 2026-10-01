@@ -39,6 +39,16 @@ public class ShortUrl {
     @Column(name = "expires_at")
     private Instant expiresAt;
 
+    @Column(name = "activates_at", updatable = false)
+    private Instant activatesAt;
+
+    @Column(name = "max_clicks", updatable = false)
+    private Long maxClicks;
+
+    // Updated atomically by redirect admission, never by a stale managed entity.
+    @Column(name = "click_count", nullable = false, updatable = false)
+    private long clickCount;
+
     @Column(nullable = false)
     private boolean active;
 
@@ -50,6 +60,17 @@ public class ShortUrl {
         this(shortCode, originalUrl, expiresAt, active);
         this.user = user;
     }
+
+    public ShortUrl(String shortCode, String originalUrl, Instant expiresAt, User user,
+                    Instant activatesAt, Long maxClicks) {
+        this(shortCode, originalUrl, expiresAt, true, user);
+        this.activatesAt = activatesAt;
+        this.maxClicks = maxClicks;
+    }
+
+    public Instant getActivatesAt() { return activatesAt; }
+    public Long getMaxClicks() { return maxClicks; }
+    public long getClickCount() { return clickCount; }
 
     protected ShortUrl() {
     }

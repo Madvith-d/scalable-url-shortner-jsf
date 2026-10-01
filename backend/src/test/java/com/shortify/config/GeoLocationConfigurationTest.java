@@ -27,7 +27,8 @@ class GeoLocationConfigurationTest {
             assertThat(properties.databasePath()).isEmpty();
             assertThat(properties.apiKey()).isEmpty();
             assertThat(properties.trustedProxies()).isEmpty();
-            assertThat(context.getBean(GeoLookupService.class).lookup("8.8.8.8")).isEqualTo(GeoLocation.UNKNOWN);
+            assertThat(properties.freeFallbackEnabled()).isTrue();
+            assertThat(context.getBean(GeoLookupService.class).lookup("127.0.0.1")).isEqualTo(GeoLocation.UNKNOWN);
         });
     }
 
@@ -57,6 +58,7 @@ class GeoLocationConfigurationTest {
         assertThat(properties.getProperty("shortify.geolocation.enabled")).isEqualTo("${GEO_ENABLED:true}");
         assertThat(properties.getProperty("shortify.geolocation.database-path")).isEqualTo("${GEO_DATABASE_PATH:}");
         assertThat(properties.getProperty("shortify.geolocation.api-key")).isEqualTo("${GEO_API_KEY:}");
+        assertThat(properties.getProperty("shortify.geolocation.free-fallback-enabled")).isEqualTo("${GEO_FREE_FALLBACK_ENABLED:true}");
         assertThat(properties.getProperty("shortify.geolocation.trusted-proxies")).isEqualTo("${GEO_TRUSTED_PROXIES:}");
     }
 }

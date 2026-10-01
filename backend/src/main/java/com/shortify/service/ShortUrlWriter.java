@@ -23,7 +23,13 @@ public class ShortUrlWriter {
     // Each failed insert must roll back before another code can be attempted on PostgreSQL.
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ShortUrl insert(String shortCode, String originalUrl, Instant expiresAt, Long userId) {
-        return repository.saveAndFlush(new ShortUrl(shortCode, originalUrl, expiresAt, true,
-                users.getReferenceById(userId)));
+        return insert(shortCode, originalUrl, expiresAt, userId, null, null);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public ShortUrl insert(String shortCode, String originalUrl, Instant expiresAt, Long userId,
+                           Instant activatesAt, Long maxClicks) {
+        return repository.saveAndFlush(new ShortUrl(shortCode, originalUrl, expiresAt,
+                users.getReferenceById(userId), activatesAt, maxClicks));
     }
 }

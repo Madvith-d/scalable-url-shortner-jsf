@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useAuth } from "./auth-provider";
+import { ShareLink } from "./share-link";
 import { CopyButton, ExternalLink, StatusBadge } from "./link-ui";
 import { errorMessage, isAbort } from "@/lib/api";
 import { DRAFT_KEY, draftPayload, emptyDraft, readDraft, validateDraft } from "@/lib/helpers";
@@ -106,6 +107,23 @@ export function CreateForm({ onCreated }: { onCreated?: (url: ShortUrl) => void 
             <p className="field-hint" id={`${id}-expiry-help`}>Your local time. Leave blank for no expiration.</p>
           </div>
         </div>
+        <div className="form-grid">
+          <div className="field">
+            <label htmlFor={`${id}-activation`}>Scheduled activation <span>Optional</span></label>
+            <input id={`${id}-activation`} type="datetime-local" value={draft.activatesAt ?? ""}
+              onChange={event => update("activatesAt", event.target.value)}
+              min="0001-01-01T00:00" max="9999-12-31T23:59" disabled={busy}
+              aria-describedby={`${id}-activation-help`} />
+            <p className="field-hint" id={`${id}-activation-help`}>Your local time. Leave blank to activate immediately.</p>
+          </div>
+          <div className="field">
+            <label htmlFor={`${id}-cap`}>Click cap <span>Optional</span></label>
+            <input id={`${id}-cap`} type="number" min="1" max="9007199254740991" step="1"
+              value={draft.maxClicks ?? ""} onChange={event => update("maxClicks", event.target.value)}
+              placeholder="Unlimited" disabled={busy} aria-describedby={`${id}-cap-help`} />
+            <p className="field-hint" id={`${id}-cap-help`}>Stop redirects after this many clicks. Repeat visits count too.</p>
+          </div>
+        </div>
         {draft.expiresAt && Date.parse(draft.expiresAt) <= Date.now() && (
           <p className="warning" role="status">This time is in the past. Your link will be created already expired and will not redirect.</p>
         )}
@@ -127,6 +145,7 @@ export function CreateForm({ onCreated }: { onCreated?: (url: ShortUrl) => void 
           <div className="result-url">
             <ExternalLink href={created.shortUrl}>{created.shortUrl}</ExternalLink>
             <CopyButton value={created.shortUrl} />
+            <ShareLink url={created} />
           </div>
           <Link className="text-link" href={`/urls/${created.id}`}>Manage this link</Link>
         </div>

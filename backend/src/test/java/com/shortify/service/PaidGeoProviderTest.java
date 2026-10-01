@@ -199,6 +199,50 @@ class PaidGeoProviderTest {
         assertThat(transport.calls).hasValue(0);
     }
 
+    @Test
+    void keylessFallbackUsesHttpsAndMapsFreeProviderSchema() {
+        provider.close();
+        provider = new PaidGeoProvider("", transport, ticker::get, 1500, true);
+        transport.response = response(200, "{\"success\":true,\"country_code\":\"US\",\"city\":\"San Jose\"}", false, 0);
+        assertThat(lookup()).isEqualTo(new GeoLocation("US", "San Jose"));
+        assertThat(PaidGeoProvider.freeEndpoint("8.8.8.8").toString())
+                .isEqualTo("https://ipwho.is/8.8.8.8?fields=success,country_code,city");
+        assertThat(transport.request.get().getRequestUri()).contains("/8.8.8.8?fields=success,country_code,city").doesNotContain("key=");
+    }
+
+    @Test
+    void paidKeyTakesPrecedenceOverFreeFallback() {
+        provider.close();
+        provider = new PaidGeoProvider("server-secret", transport, ticker::get, 1500, true);
+        assertThat(lookup()).isEqualTo(new GeoLocation("US", "Mountain View"));
+        assertThat(transport.request.get().getRequestUri()).contains("/json/8.8.8.8", "key=server-secret");
+    }
+
+    @Test
+    void keylessFallbackNeverSendsPrivateAddressesAndCanBeDisabled() {
+        provider.close();
+        provider = new PaidGeoProvider("", transport, ticker::get, 1500, true);
+        for (String ip : new String[]{"127.0.0.1", "10.0.0.1", "::1", "192.168.1.1", "bad-host"}) {
+            assertThat(provider.lookup(ip, System.nanoTime())).isEqualTo(GeoLocation.UNKNOWN);
+        }
+        assertThat(transport.calls).hasValue(0);
+        provider.close();
+        provider = new PaidGeoProvider(new GeoLocationProperties(false, "", "", "", true));
+        assertThat(lookup()).isEqualTo(GeoLocation.UNKNOWN);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{}", "{\"success\":false}", "{\"success\":\"true\",\"country_code\":\"US\"}",
+            "{\"success\":true,\"country_code\":\"ZZ\"}", "{\"success\":true,\"country_code\":\"US\"} {}"})
+    void keylessFailuresBackOffWithoutInventingLocations(String body) {
+        provider.close();
+        provider = new PaidGeoProvider("", transport, ticker::get, 1500, true);
+        transport.response = response(200, body, false, 0);
+        assertThat(lookup()).isEqualTo(GeoLocation.UNKNOWN);
+        assertThat(lookup()).isEqualTo(GeoLocation.UNKNOWN);
+        assertThat(transport.calls).hasValue(1);
+    }
+
     private GeoLocation lookup() {
         return provider.lookup("8.8.8.8", System.nanoTime());
     }

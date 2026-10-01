@@ -113,7 +113,10 @@ class ShortUrlApiIT extends RedisIntegrationSupport {
         assertThat(body.path("active").asBoolean()).isTrue();
         assertThat(body.path("expiresAt").isNull()).isTrue();
         assertThat(Instant.parse(body.path("createdAt").asText())).isBefore(Instant.now().plusSeconds(1));
-        assertThat(body.size()).isEqualTo(7);
+        assertThat(body.size()).isEqualTo(10);
+        assertThat(body.path("activatesAt").isNull()).isTrue();
+        assertThat(body.path("maxClicks").isNull()).isTrue();
+        assertThat(body.path("clickCount").asLong()).isZero();
         ShortUrl persisted = repository.findById(id).orElseThrow();
         assertThat(persisted.getShortCode()).isEqualTo(code);
         assertThat(persisted.getOriginalUrl()).isEqualTo(original);

@@ -30,7 +30,7 @@ export function CopyButton({ value }: { value: string }) {
   );
 }
 
-export function StatusBadge({ url }: { url: Pick<ShortUrl, "active" | "expiresAt"> }) {
+export function StatusBadge({ url }: { url: Pick<ShortUrl, "active" | "expiresAt" | "activatesAt" | "maxClicks" | "clickCount"> }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);

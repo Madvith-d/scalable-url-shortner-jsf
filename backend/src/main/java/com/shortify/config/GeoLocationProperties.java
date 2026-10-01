@@ -7,7 +7,15 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 public record GeoLocationProperties(@DefaultValue("true") boolean enabled,
                                     @DefaultValue("") String databasePath,
                                     @DefaultValue("") String apiKey,
-                                    @DefaultValue("") String trustedProxies) {
+                                    @DefaultValue("") String trustedProxies,
+                                    @DefaultValue("true") boolean freeFallbackEnabled) {
+
+    @org.springframework.boot.context.properties.bind.ConstructorBinding
+    public GeoLocationProperties { }
+
+    public GeoLocationProperties(boolean enabled, String databasePath, String apiKey, String trustedProxies) {
+        this(enabled, databasePath, apiKey, trustedProxies, false);
+    }
 
     @Override
     public String toString() {

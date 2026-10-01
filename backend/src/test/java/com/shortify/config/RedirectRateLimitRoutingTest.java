@@ -52,7 +52,7 @@ class RedirectRateLimitRoutingTest {
         urls = mock(ShortUrlService.class);
         when(urls.resolveTarget(anyString())).thenReturn(new RedirectCache.Target(1L, "https://example.com", true, null));
         analytics = mock(AnalyticsService.class);
-        mvc = MockMvcBuilders.standaloneSetup(new RedirectController(urls, analytics, mock(ClientIpResolver.class)))
+        mvc = MockMvcBuilders.standaloneSetup(new RedirectController(urls, analytics, mock(ClientIpResolver.class), mock(com.shortify.service.RedirectAdmission.class)))
                 .addInterceptors(interceptor.getValue()).build();
     }
 

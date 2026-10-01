@@ -1,6 +1,8 @@
 .env
 .env.*
 !.env.example
+# Local ngrok configuration contains an agent auth token.
+ngrok.yml
 .local/
 **/target/
 **/node_modules/

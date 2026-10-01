@@ -6,6 +6,9 @@ export type ShortUrl = {
   createdAt: string;
   expiresAt: string | null;
   active: boolean;
+  activatesAt?: string | null;
+  maxClicks?: number | null;
+  clickCount?: number;
 };
 
 export type UrlPage = {
@@ -34,4 +37,4 @@ export type Analytics = {
   devices: Bucket[];
   geography: Bucket[];
 };
-export type Draft = { originalUrl: string; customAlias: string; expiresAt: string };
+export type Draft = { originalUrl: string; customAlias: string; expiresAt: string; activatesAt?: string; maxClicks?: string };

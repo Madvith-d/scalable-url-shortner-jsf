@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { CreateForm } from "./create-form";
+import { ShareLink } from "./share-link";
 import { CopyButton, ExternalLink, StatusBadge } from "./link-ui";
 import { ErrorState, Loading } from "./shell";
 import { formatDate } from "@/lib/helpers";
@@ -77,6 +78,7 @@ export function Dashboard() {
                     <td data-label="Actions" role="cell">
                       <div className="row-actions">
                         <CopyButton value={url.shortUrl} />
+                        <ShareLink url={url} />
                         <Link className="text-link" href={`/urls/${url.id}`}>Manage<span className="sr-only"> {url.shortCode}</span></Link>
                         <Link className="text-link" href={`/urls/${url.id}/analytics`}>Analytics<span className="sr-only"> for {url.shortCode}</span></Link>
                       </div>

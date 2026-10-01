@@ -2,11 +2,14 @@ import type { Draft, Session, ShortUrl } from "./types.ts";
 
 export const SESSION_KEY = "shortify.session";
 export const DRAFT_KEY = "shortify.draft";
-export const emptyDraft: Draft = { originalUrl: "", customAlias: "", expiresAt: "" };
+export const emptyDraft: Draft = { originalUrl: "", customAlias: "", expiresAt: "", activatesAt: "", maxClicks: "" };
 
-export function linkStatus(url: Pick<ShortUrl, "active" | "expiresAt">, now = Date.now()) {
+export function linkStatus(url: Pick<ShortUrl, "active" | "expiresAt" | "activatesAt" | "maxClicks" | "clickCount">, now = Date.now()) {
   if (url.expiresAt && Date.parse(url.expiresAt) <= now) return "Expired";
-  return url.active ? "Active" : "Inactive";
+  if (!url.active) return "Inactive";
+  if (url.activatesAt && Date.parse(url.activatesAt) > now) return "Scheduled";
+  if (url.maxClicks != null && (url.clickCount ?? 0) >= url.maxClicks) return "Capped";
+  return "Active";
 }
 
 export function formatDate(value: string | null) {
@@ -43,7 +46,9 @@ export function readDraft(raw: string | null): Draft {
   try {
     const value = JSON.parse(raw || "null");
     return value && ["originalUrl", "customAlias", "expiresAt"].every(key => typeof value[key] === "string")
-      ? { originalUrl: value.originalUrl, customAlias: value.customAlias, expiresAt: value.expiresAt }
+      ? { originalUrl: value.originalUrl, customAlias: value.customAlias, expiresAt: value.expiresAt,
+          activatesAt: typeof value.activatesAt === "string" ? value.activatesAt : "",
+          maxClicks: typeof value.maxClicks === "string" ? value.maxClicks : "" }
       : { ...emptyDraft };
   } catch { return { ...emptyDraft }; }
 }
@@ -64,6 +69,14 @@ export function validateDraft(draft: Draft): string | null {
     const date = new Date(draft.expiresAt);
     if (!Number.isFinite(date.getTime()) || date.getUTCFullYear() < 1 || date.getUTCFullYear() > 9999) return "Enter a valid expiration date and time (years 0001–9999).";
   }
+  if (draft.activatesAt) {
+    const date = new Date(draft.activatesAt);
+    if (!Number.isFinite(date.getTime()) || date.getUTCFullYear() < 1 || date.getUTCFullYear() > 9999) return "Enter a valid activation date and time (years 0001–9999).";
+    if (draft.expiresAt && date.getTime() >= Date.parse(draft.expiresAt)) return "Activation must be before expiration.";
+  }
+  if (draft.maxClicks && (!/^[0-9]+$/.test(draft.maxClicks) || !Number.isSafeInteger(Number(draft.maxClicks)) || Number(draft.maxClicks) < 1)) {
+    return "Enter a positive whole-number click cap (up to 9007199254740991).";
+  }
   return null;
 }
 
@@ -72,6 +85,8 @@ export function draftPayload(draft: Draft) {
     originalUrl: draft.originalUrl,
     ...(draft.customAlias ? { customAlias: draft.customAlias } : {}),
     ...(draft.expiresAt ? { expiresAt: new Date(draft.expiresAt).toISOString() } : {}),
+    ...(draft.activatesAt ? { activatesAt: new Date(draft.activatesAt).toISOString() } : {}),
+    ...(draft.maxClicks ? { maxClicks: Number(draft.maxClicks) } : {}),
   };
 }
 

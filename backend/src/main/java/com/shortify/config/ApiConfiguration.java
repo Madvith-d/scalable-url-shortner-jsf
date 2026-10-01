@@ -24,7 +24,7 @@ public class ApiConfiguration {
         return builder -> builder
                 .featuresToEnable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES,
                         DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-                .featuresToDisable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
+                .featuresToDisable(MapperFeature.ALLOW_COERCION_OF_SCALARS, DeserializationFeature.ACCEPT_FLOAT_AS_INT)
                 .postConfigurer(mapper -> mapper.coercionConfigFor(LogicalType.Textual)
                         .setCoercion(CoercionInputShape.Integer, CoercionAction.Fail)
                         .setCoercion(CoercionInputShape.Float, CoercionAction.Fail)

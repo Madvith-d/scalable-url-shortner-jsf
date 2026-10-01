@@ -23,9 +23,13 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Component
 public class RedirectCache {
 
-    public record Target(Long id, String destination, boolean active, Instant expiresAt) {
+    public record Target(Long id, String destination, boolean active, Instant expiresAt, Instant activatesAt) {
+        public Target(Long id, String destination, boolean active, Instant expiresAt) {
+            this(id, destination, active, expiresAt, null);
+        }
+
         public static Target from(ShortUrl url) {
-            return new Target(url.getId(), url.getOriginalUrl(), url.isActive(), url.getExpiresAt());
+            return new Target(url.getId(), url.getOriginalUrl(), url.isActive(), url.getExpiresAt(), url.getActivatesAt());
         }
     }
 

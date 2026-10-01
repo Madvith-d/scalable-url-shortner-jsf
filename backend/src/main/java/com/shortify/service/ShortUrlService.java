@@ -60,14 +60,23 @@ public class ShortUrlService {
         Long userId = currentUser.requireId();
         validator.validate(request.originalUrl());
         aliases.validate(request.customAlias());
-        Instant expiresAt = parseExpiration(request.expiresAt());
+        Instant expiresAt = parseTimestamp(request.expiresAt(), "expiresAt");
+        Instant activatesAt = parseTimestamp(request.activatesAt(), "activatesAt");
+        if (activatesAt != null && expiresAt != null && !activatesAt.isBefore(expiresAt)) {
+            throw new UrlException(HttpStatus.BAD_REQUEST, "INVALID_BODY", "Activation must be before expiration.");
+        }
+        if (request.maxClicks() != null && (request.maxClicks() < 1 || request.maxClicks() > 9007199254740991L)) {
+            throw new UrlException(HttpStatus.BAD_REQUEST, "INVALID_BODY", "maxClicks must be a positive safe integer.");
+        }
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             String code = request.customAlias() == null ? generator.generate() : request.customAlias();
             if (aliases.isReserved(code)) {
                 continue;
             }
             try {
-                return response(writer.insert(code, request.originalUrl(), expiresAt, userId));
+                return response(activatesAt == null && request.maxClicks() == null
+                        ? writer.insert(code, request.originalUrl(), expiresAt, userId)
+                        : writer.insert(code, request.originalUrl(), expiresAt, userId, activatesAt, request.maxClicks()));
             } catch (DataIntegrityViolationException exception) {
                 if (!isCodeCollision(exception)) {
                     throw exception;
@@ -99,6 +108,9 @@ public class ShortUrlService {
         }
         if (target.expiresAt() != null && !target.expiresAt().isAfter(clock.instant())) {
             throw new UrlException(HttpStatus.GONE, "URL_EXPIRED", "The short URL has expired.");
+        }
+        if (target.activatesAt() != null && target.activatesAt().isAfter(clock.instant())) {
+            throw new UrlException(HttpStatus.NOT_FOUND, "URL_NOT_ACTIVE_YET", "The short URL is scheduled and not active yet.");
         }
         return target;
     }
@@ -137,7 +149,7 @@ public class ShortUrlService {
         return new UrlException(HttpStatus.NOT_FOUND, "URL_NOT_FOUND", "The short URL was not found.");
     }
 
-    private Instant parseExpiration(String value) {
+    private Instant parseTimestamp(String value, String field) {
         if (value == null) {
             return null;
         }
@@ -146,12 +158,12 @@ public class ShortUrlService {
             if (expiration.isBefore(Instant.parse("0001-01-01T00:00:00Z"))
                     || !expiration.isBefore(Instant.parse("+10000-01-01T00:00:00Z"))) {
                 throw new UrlException(HttpStatus.BAD_REQUEST, "INVALID_BODY",
-                        "expiresAt must be within calendar years 0001 through 9999.");
+                        field + " must be within calendar years 0001 through 9999.");
             }
             return expiration;
         } catch (DateTimeParseException exception) {
             throw new UrlException(HttpStatus.BAD_REQUEST, "INVALID_BODY",
-                    "expiresAt must be an ISO-8601 timestamp with an offset.");
+                    field + " must be an ISO-8601 timestamp with an offset.");
         }
     }
 
@@ -168,6 +180,7 @@ public class ShortUrlService {
 
     private ShortUrlResponse response(ShortUrl url) {
         return new ShortUrlResponse(url.getId(), url.getShortCode(), baseUrl + "/" + url.getShortCode(),
-                url.getOriginalUrl(), url.getCreatedAt(), url.getExpiresAt(), url.isActive());
+                url.getOriginalUrl(), url.getCreatedAt(), url.getExpiresAt(), url.isActive(),
+                url.getActivatesAt(), url.getMaxClicks(), url.getClickCount());
     }
 }

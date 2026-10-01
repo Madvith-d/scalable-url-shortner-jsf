@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { useAuth } from "./auth-provider";
+import { ShareLink } from "./share-link";
 import { CopyButton, ExternalLink, StatusBadge } from "./link-ui";
 import { ErrorState, Loading } from "./shell";
 import { errorMessage, isAbort } from "@/lib/api";
@@ -43,7 +44,7 @@ function DetailContent({ initial }: { initial: ShortUrl }) {
     try {
       const updated = await request<ShortUrl>(`/api/urls/${url.id}`, { method: "PATCH", body: JSON.stringify({ active: !url.active }) });
       setUrl(updated);
-      setMessage(updated.active ? "Link reactivated. Expiration still applies." : "Link deactivated. Your details and click history are preserved.");
+      setMessage(updated.active ? "Link reactivated. Schedule, expiration, and click cap still apply." : "Link deactivated. Your details and click history are preserved.");
     } catch (failure) { if (!isAbort(failure)) setError(errorMessage(failure)); }
     finally { setBusy(false); inFlight.current = false; }
   }
@@ -57,6 +58,7 @@ function DetailContent({ initial }: { initial: ShortUrl }) {
         <div className="share-strip">
           <ExternalLink href={url.shortUrl}>{url.shortUrl}</ExternalLink>
           <CopyButton value={url.shortUrl} />
+          <ShareLink url={url} />
         </div>
         <dl className="detail-list">
           <div className="wide-detail">
@@ -65,6 +67,9 @@ function DetailContent({ initial }: { initial: ShortUrl }) {
           </div>
           <div><dt>Created (UTC)</dt><dd>{formatDate(url.createdAt)}</dd></div>
           <div><dt>Expires (UTC)</dt><dd>{formatDate(url.expiresAt)}</dd></div>
+          <div><dt>Activates (UTC)</dt><dd>{url.activatesAt ? formatDate(url.activatesAt) : "Immediately"}</dd></div>
+          <div><dt>Click cap</dt><dd>{url.maxClicks?.toLocaleString() ?? "Unlimited"}</dd></div>
+          <div><dt>Accepted clicks</dt><dd>{(url.clickCount ?? 0).toLocaleString()}{url.maxClicks != null && ` / ${url.maxClicks.toLocaleString()}`}</dd></div>
           <div><dt>Short code</dt><dd>{url.shortCode}</dd></div>
           <div><dt>Activation setting</dt><dd>{url.active ? "Active" : "Inactive"}</dd></div>
         </dl>
@@ -73,7 +78,7 @@ function DetailContent({ initial }: { initial: ShortUrl }) {
         <section className="panel control-panel">
           <h2>Link availability</h2>
           <p>Deactivating stops redirects without deleting the link or its history. You can reactivate it later.</p>
-          <p className="field-hint">Expiration always applies, even after reactivation. Cached redirects may take up to 30 seconds to reflect changes with the default backend settings.</p>
+          <p className="field-hint">Schedule, expiration, and click cap always apply, even after reactivation. Reactivating does not reset the click count. Availability settings are chosen at creation. Accepted clicks are counted before redirecting; best-effort analytics totals may be lower.</p>
           <button className={`button ${url.active ? "danger-secondary" : ""}`} onClick={toggle} disabled={busy}>
             {busy ? "Updating link…" : url.active ? "Deactivate link" : "Reactivate link"}
           </button>
