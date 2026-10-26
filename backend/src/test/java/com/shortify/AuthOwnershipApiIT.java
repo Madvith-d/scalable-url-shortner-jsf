@@ -333,6 +333,31 @@ class AuthOwnershipApiIT extends RedisIntegrationSupport {
     }
 
     @Test
+    void expiredLinkReleasesItsAliasForReuseWhileLiveLinksKeepItReserved() throws Exception {
+        String alias = "reuse-" + UUID.randomUUID().toString().substring(0, 20);
+        var expired = send("POST", "/api/urls", Map.of("originalUrl", "https://example.com/old",
+                "customAlias", alias, "expiresAt", Instant.now().minusSeconds(1).toString()), alice.token());
+        assertThat(expired.statusCode()).as(expired.body()).isEqualTo(201);
+        long oldId = mapper.readTree(expired.body()).path("id").asLong();
+        urlIds.add(oldId);
+        assertThat(send("GET", "/" + alias, null, null).statusCode()).isEqualTo(410);
+
+        var reused = send("POST", "/api/urls", Map.of("originalUrl", "https://example.com/new",
+                "customAlias", alias), bob.token());
+        assertThat(reused.statusCode()).as(reused.body()).isEqualTo(201);
+        JsonNode fresh = mapper.readTree(reused.body());
+        assertThat(fresh.path("shortCode").asText()).isEqualTo(alias);
+        urlIds.add(fresh.path("id").asLong());
+        // The dead row (and its click history, cascaded) is gone after the alias was released.
+        assertThat(urls.findById(oldId)).isEmpty();
+        assertThat(send("GET", "/" + alias, null, null).headers().firstValue("Location"))
+                .contains("https://example.com/new");
+        // A live link reserves the alias again.
+        error(send("POST", "/api/urls", Map.of("originalUrl", "https://example.com/other",
+                "customAlias", alias), alice.token()), 409, "ALIAS_IN_USE");
+    }
+
+    @Test
     void legacyUnownedUrlsStayPublicButCannotBeManagedOrClaimed() throws Exception {
         String alias = "legacy-" + UUID.randomUUID().toString().substring(0, 20);
         var legacy = urls.saveAndFlush(new ShortUrl(alias, "https://example.com/legacy", null, true));

@@ -10,6 +10,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface ShortUrlRepository extends JpaRepository<ShortUrl, Long> {
 
@@ -28,6 +29,15 @@ public interface ShortUrlRepository extends JpaRepository<ShortUrl, Long> {
               AND (max_clicks IS NULL OR click_count < max_clicks)
             """, nativeQuery = true)
     int admitClick(Long id, Instant now);
+
+    @Modifying
+    @Query(value = """
+            DELETE FROM short_urls
+            WHERE short_code = :code
+              AND expires_at IS NOT NULL AND expires_at <= :now
+            """, nativeQuery = true)
+    @Transactional
+    int deleteExpiredByShortCode(String code, Instant now);
 
     Optional<ShortUrl> findByShortCode(String shortCode);
 

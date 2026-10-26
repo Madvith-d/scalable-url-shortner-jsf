@@ -19,3 +19,5 @@ ngrok.yml
 .DS_Store
 phases.md 
 scope.md 
+*.mmdb
+locationdb/

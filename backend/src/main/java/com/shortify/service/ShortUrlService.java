@@ -82,6 +82,11 @@ public class ShortUrlService {
                     throw exception;
                 }
                 if (request.customAlias() != null) {
+                    // An expired link is dead forever (expiresAt is immutable), so its code can be released.
+                    if (repository.deleteExpiredByShortCode(request.customAlias(), clock.instant()) > 0) {
+                        events.publishEvent(new RedirectCache.Changed(request.customAlias()));
+                        continue;
+                    }
                     throw new UrlException(HttpStatus.CONFLICT, "ALIAS_IN_USE", "The custom alias is already in use.");
                 }
             }
@@ -104,13 +109,16 @@ public class ShortUrlService {
         var target = cache.resolve(shortCode, () -> RedirectCache.Target.from(
                 repository.findByShortCode(shortCode).orElseThrow(this::notFound)));
         if (!target.active()) {
-            throw new UrlException(HttpStatus.GONE, "URL_INACTIVE", "The short URL is inactive.");
+            throw new UrlException(HttpStatus.GONE, "URL_INACTIVE", "The short URL is inactive.",
+                    null, target.expiresAt(), null, null);
         }
         if (target.expiresAt() != null && !target.expiresAt().isAfter(clock.instant())) {
-            throw new UrlException(HttpStatus.GONE, "URL_EXPIRED", "The short URL has expired.");
+            throw new UrlException(HttpStatus.GONE, "URL_EXPIRED", "The short URL has expired.",
+                    null, target.expiresAt(), null, null);
         }
         if (target.activatesAt() != null && target.activatesAt().isAfter(clock.instant())) {
-            throw new UrlException(HttpStatus.NOT_FOUND, "URL_NOT_ACTIVE_YET", "The short URL is scheduled and not active yet.");
+            throw new UrlException(HttpStatus.NOT_FOUND, "URL_NOT_ACTIVE_YET", "The short URL is scheduled and not active yet.",
+                    target.activatesAt(), null, null, null);
         }
         return target;
     }

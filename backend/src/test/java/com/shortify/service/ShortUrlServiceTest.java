@@ -195,6 +195,19 @@ class ShortUrlServiceTest {
     }
 
     @Test
+    void expiredAliasCollisionReleasesTheCodeAndRetriesInsert() {
+        ShortUrl created = url(null, true);
+        when(writer.insert("My_Alias", ORIGINAL, null, 7L))
+                .thenThrow(violation("23505", "uk_short_urls_short_code"))
+                .thenReturn(created);
+        when(repository.deleteExpiredByShortCode("My_Alias", NOW)).thenReturn(1);
+        assertThat(service.create(new CreateShortUrlRequest(ORIGINAL, null, "My_Alias")).shortCode())
+                .isEqualTo(created.getShortCode());
+        verify(repository).deleteExpiredByShortCode("My_Alias", NOW);
+        verify(writer, times(2)).insert("My_Alias", ORIGINAL, null, 7L);
+    }
+
+    @Test
     void serviceRequiresAuthenticatedOwnerForEveryManagementOperation() {
         when(currentUser.requireId()).thenThrow(new UrlException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "Authentication is required."));
         assertError(() -> service.create(new CreateShortUrlRequest(ORIGINAL, null, null)), HttpStatus.UNAUTHORIZED, "UNAUTHORIZED");

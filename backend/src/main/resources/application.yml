@@ -51,6 +51,7 @@ shortify:
     interval: ${CLEANUP_INTERVAL:60000}
     batch-size: ${CLEANUP_BATCH_SIZE:200}
   base-url: ${SHORTIFY_BASE_URL:http://localhost:${SERVER_PORT:8080}}
+  frontend-url: ${FRONTEND_BASE_URL:http://localhost:3000}
   jwt:
     secret: ${JWT_SECRET}
     issuer: ${JWT_ISSUER:shortify}

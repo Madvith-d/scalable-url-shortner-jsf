@@ -333,3 +333,42 @@ The application runs at **http://localhost:3002**, with backend **http://localho
 No visitor fingerprinting, unique-visitor logic, new bot exclusion, GPS/coordinates, or synchronous lookup was added. Analytics remains best effort; slow provider calls can delay metadata or fill the bounded queue. No manual assistive-technology audit or other browser-engine verification was performed. Test accounts from browser scenarios remain in the development database; unrelated applications and files were preserved.
 
 Local logs: `.local/geolocation-backend-verify.log`, `.local/geolocation-frontend-typecheck.log`, `.local/geolocation-frontend-unit.log`, `.local/geolocation-image-build.log`, and `.local/geolocation-production-browser.log`. Screenshots/reports are ignored under `frontend/test-results/` and `frontend/playwright-report/`.
+
+## Friendly failure screens for short-link redirects
+
+Verified fail-cases of `GET /{shortCode}` now land on styled frontend screens instead of raw JSON, with API error contracts unchanged.
+
+### Delivered behavior
+
+- The backend redirect route content-negotiates on `Accept`. Requests without `text/html` keep the exact previous JSON `ApiError` bodies; browser requests (`Accept: text/html…`) receive `302` + `Cache-Control: no-store` to the configured frontend at `{shortify.frontend-url}:/link/<state>` with query context: `code`, `expiresAt` (expired), and `activatesAt` plus a `continue` short URL for scheduled links. `UrlException` now carries nullable `activatesAt`/`expiresAt`/`maxClicks`/`clickCount`, attached at the throw sites in `ShortUrlService.resolveTarget` and `RedirectAdmission.admit` for the redirect path only.
+- State mapping: `URL_EXPIRED` → `/link/expired`, `URL_NOT_ACTIVE_YET` → `/link/scheduled`, `URL_CLICK_CAP_REACHED` → `/link/capped`, `URL_INACTIVE` → `/link/inactive`, everything else (`URL_NOT_FOUND`, `URL_STATE_CHANGED`, unknown codes) → `/link/unavailable`.
+- Screens: expired shows the expiry timestamp; scheduled shows a live second-by-second countdown to `activatesAt` and auto-continues to the short URL when it elapses (manual reload fallback); capped, inactive, and unavailable show fixed copy. Bad state/param values fall back to `notFound()` or null context; `continue` is only honored for http/https. Config: new `shortify.frontend-url` property (`FRONTEND_BASE_URL`), wired in Compose from `FRONTEND_PORT`.
+
+### Executed checks
+
+| Check | Result |
+| --- | --- |
+| Backend `./mvnw test` (unit + integration) | Existing JSON error asserts unchanged and passing; new `LinkAvailabilityIT.browsersAreRedirectedToFriendlyScreensWhenLinkIsUnavailable` asserts 302 + `Location` for all five states |
+| Frontend `npm run build` | Passed; `/link/[state]` dynamic route compiles |
+| Frontend `npm test` | **54 passed**, zero failures (was 51 before this feature's screens: no regression) |
+| Compose end-to-end (`Accept: text/html` probes) | capped/expired/inactive/scheduled/unavailable all 302 to `http://localhost:3002/link/<state>` with the expected query context; scheduled page renders the live countdown and title; API-client requests still receive the original JSON error bodies |
+
+A hand-typed invalid `/link/<state>` renders the standard root not-found screen; because the state segment is streamed, Next serves it with a 200 status (backend-generated supervisor URLs always carry valid states, so this affects only manual entry).
+
+## Expired aliases become reusable
+
+Verified on **2026-10-25**. Question raised: expired links are cleared when? Answer: never — `shortify.cleanup` (`CLEANUP_INTERVAL`, default 60 s, batch 200) only marks expired links `active = false` and evicts their redirect-cache entry; `short_urls` rows live on, and `uk_short_urls_short_code` therefore kept every alias reserved forever, even after expiry.
+
+### Delivered behavior
+
+- Creating a link whose custom alias collides now releases a dead code instead of failing: on unique-violation collision in `ShortUrlService.create`, the service deletes the colliding row if — and only if — it has an `expiresAt` in the past (`ShortUrlRepository.deleteExpiredByShortCode`), publishes the `RedirectCache.Changed` eviction, and retries the insert. Deactivated links and scheduled links still reserve their alias (a deactivated link can be re-activated by its owner, so its code is not dead; scheduled links are future-active). Since `expiresAt` is immutable after creation, an expired link can never serve again; its deletion cascade (`click_events ON DELETE CASCADE`) removes that code's click history.
+- Live link reservation is preserved: immediately after a successful reuse the alias is reserved again by the new row, concurrent same-alias creators still receive exactly one 201 and 409 ALIAS_IN_USE losers, generator-collisions are unaffected.
+
+### Executed checks
+
+| Check | Result |
+| --- | --- |
+| Backend `./mvnw verify` (unit + integration) | 178 IT passed incl. new `AuthOwnershipApiIT.expiredLinkReleasesItsAliasForReuseWhileLiveLinksKeepItReserved` (410 on dead alias → reuse 201 → old row gone → 302 to new destination → a third create still 409); new unit `ShortUrlServiceTest.expiredAliasCollisionReleasesTheCodeAndRetriesInsert`; all prior alias/concurrency/deactivation asserts unchanged |
+| Compose end-to-end 2026-10-25 | create-with-past-expiry 201 → GET 410 → same alias re-created 201 → GET 302 to the renewed destination → third create 409 ALIAS_IN_USE |
+
+

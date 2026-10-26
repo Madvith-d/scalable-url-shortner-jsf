@@ -141,6 +141,46 @@ class LinkAvailabilityIT extends RedisIntegrationSupport {
         assertThat(url.path("maxClicks").isNull()).isTrue();
     }
 
+    @Test
+    void browsersAreRedirectedToFriendlyScreensWhenLinkIsUnavailable() throws Exception {
+        String frontend = "http://localhost:3000/link/";
+        // Scheduled (not active yet): screen carries the activation instant and an auto-continue URL.
+        var scheduled = create(Map.of("activatesAt", now.plusSeconds(30).toString()));
+        String scheduledPath = "/" + scheduled.path("shortCode").asText();
+        var browserError = sendBrowser("GET", scheduledPath, null);
+        assertThat(browserError.statusCode()).as(browserError.body()).isEqualTo(302);
+        String scheduledLocation = browserError.headers().firstValue("Location").orElseThrow();
+        assertThat(scheduledLocation).startsWith(frontend + "scheduled?");
+        assertThat(scheduledLocation).contains("code=" + scheduled.path("shortCode").asText());
+        assertThat(scheduledLocation).contains("activatesAt=");
+        assertThat(scheduledLocation).contains("continue=http%3A%2F%2F");
+
+        // Expired
+        var expired = create(Map.of("expiresAt", now.minusSeconds(1).toString()));
+        String expiredLocation = sendBrowser("GET", "/" + expired.path("shortCode").asText(), null)
+                .headers().firstValue("Location").orElseThrow();
+        assertThat(expiredLocation).startsWith(frontend + "expired?");
+        assertThat(expiredLocation).contains("expiresAt=");
+
+        // Click cap reached
+        var capped = create(Map.of("maxClicks", 1));
+        String cappedPath = "/" + capped.path("shortCode").asText();
+        assertThat(send("GET", cappedPath, null).statusCode()).isEqualTo(302);
+        assertThat(sendBrowser("GET", cappedPath, null).headers().firstValue("Location").orElseThrow())
+                .startsWith(frontend + "capped?");
+
+        // Deactivated
+        var inactive = create(Map.of());
+        String management = "/api/urls/" + inactive.path("id").asLong();
+        assertThat(send("PATCH", management, "{\"active\":false}").statusCode()).isEqualTo(200);
+        assertThat(sendBrowser("GET", "/" + inactive.path("shortCode").asText(), null)
+                .headers().firstValue("Location").orElseThrow()).startsWith(frontend + "inactive?");
+
+        // Unknown code
+        assertThat(sendBrowser("GET", "/no-such-code", null).headers().firstValue("Location").orElseThrow())
+                .startsWith(frontend + "unavailable?");
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"0", "-1", "1.5", "\"2\"", "true", "{}", "9007199254740992", "9223372036854775808"})
     void rejectsInvalidCaps(String cap) throws Exception {
@@ -178,6 +218,14 @@ class LinkAvailabilityIT extends RedisIntegrationSupport {
                 .method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
         if (token != null) request.header("Authorization", "Bearer " + token);
         if (body != null) request.header("Content-Type", "application/json");
+        return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> sendBrowser(String method, String path, String body) throws Exception {
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                .method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body))
+                .header("Accept", "text/html,application/xhtml+xml");
+        if (token != null) request.header("Authorization", "Bearer " + token);
         return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
     }
 

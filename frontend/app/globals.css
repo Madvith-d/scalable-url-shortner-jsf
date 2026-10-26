@@ -343,4 +343,18 @@
   .error-state p { margin: 8px 0 14px; }
   .not-found { padding-block: 64px; }
   .not-found p { max-width: 480px; color: var(--muted); }
+
+  .link-screen { max-width: 680px; padding-block: 72px; }
+  .link-screen .badge { margin-bottom: 20px; }
+  .link-screen h1 { margin-bottom: 12px; }
+  .link-screen > p { max-width: 480px; color: var(--muted); }
+  .link-screen .button { margin-top: 28px; }
+  .link-screen-date { margin-top: 12px; font-size: 13px; }
+  .link-screen-code { margin-top: 20px; font-size: 12px; }
+  .link-screen-code code { color: var(--muted); font-size: inherit; }
+  .countdown { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0 8px; }
+  .countdown div { min-width: 92px; padding: 16px 12px; text-align: center; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  .countdown strong { display: block; margin-bottom: 4px; font: 600 32px/1.2 var(--display); letter-spacing: -.8px; font-variant-numeric: tabular-nums; }
+  .countdown span { color: var(--muted); font-size: 12px; }
+  .countdown-empty { margin: 24px 0 8px; color: var(--info); font-size: 14px; }
 }

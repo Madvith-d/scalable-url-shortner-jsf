@@ -4,9 +4,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-c
     && rm -rf /var/lib/apt/lists/*
 COPY .mvn .mvn
 COPY mvnw pom.xml ./
-RUN chmod +x mvnw && ./mvnw -B --no-transfer-progress dependency:go-offline
+RUN chmod +x mvnw
 COPY src src
-RUN ./mvnw -B --no-transfer-progress -DskipTests package
+RUN --mount=type=cache,target=/root/.m2 ./mvnw -B --no-transfer-progress -DskipTests package
 
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app

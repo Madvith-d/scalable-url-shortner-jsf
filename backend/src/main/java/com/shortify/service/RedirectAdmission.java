@@ -31,13 +31,16 @@ public class RedirectAdmission {
             throw new UrlException(HttpStatus.GONE, "URL_INACTIVE", "The short URL is inactive.");
         }
         if (url.getExpiresAt() != null && !url.getExpiresAt().isAfter(now)) {
-            throw new UrlException(HttpStatus.GONE, "URL_EXPIRED", "The short URL has expired.");
+            throw new UrlException(HttpStatus.GONE, "URL_EXPIRED", "The short URL has expired.",
+                    null, url.getExpiresAt(), null, null);
         }
         if (url.getActivatesAt() != null && url.getActivatesAt().isAfter(now)) {
-            throw new UrlException(HttpStatus.NOT_FOUND, "URL_NOT_ACTIVE_YET", "The short URL is scheduled and not active yet.");
+            throw new UrlException(HttpStatus.NOT_FOUND, "URL_NOT_ACTIVE_YET", "The short URL is scheduled and not active yet.",
+                    url.getActivatesAt(), null, null, null);
         }
         if (url.getMaxClicks() != null && url.getClickCount() >= url.getMaxClicks()) {
-            throw new UrlException(HttpStatus.GONE, "URL_CLICK_CAP_REACHED", "The short URL has reached its click cap.");
+            throw new UrlException(HttpStatus.GONE, "URL_CLICK_CAP_REACHED", "The short URL has reached its click cap.",
+                    null, null, url.getMaxClicks(), url.getClickCount());
         }
         // A state change between a failed UPDATE and this read must not grant an uncounted GET.
         if (countClick) {
