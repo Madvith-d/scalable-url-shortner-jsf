@@ -4,7 +4,6 @@ import java.net.URI;
 
 import com.shortify.dto.AnalyticsResponse;
 import com.shortify.dto.CreateShortUrlRequest;
-import com.shortify.dto.GeographyResponse;
 import com.shortify.service.AnalyticsService;
 import com.shortify.dto.ShortUrlPage;
 import com.shortify.dto.ShortUrlResponse;
@@ -19,7 +18,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -37,12 +35,6 @@ public class ShortUrlController {
     @GetMapping("/{id}/analytics")
     public ResponseEntity<AnalyticsResponse> analytics(@PathVariable Long id) {
         return ResponseEntity.ok().header("Cache-Control", "no-store").body(analytics.get(id));
-    }
-
-    @GetMapping("/{id}/analytics/geography")
-    public ResponseEntity<GeographyResponse> geography(@PathVariable Long id,
-                                                       @RequestParam(defaultValue = "country") String by) {
-        return ResponseEntity.ok().header("Cache-Control", "no-store").body(analytics.geography(id, by));
     }
 
     @PostMapping

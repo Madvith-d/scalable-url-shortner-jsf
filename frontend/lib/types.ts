@@ -28,13 +28,11 @@ export type AuthResponse = {
 
 export type Session = { accessToken: string; email: string; expiresAt: number };
 export type Bucket = { label: string; clicks: number };
-export type GeographyBy = "country" | "city";
-export type GeographyAnalytics = { totalClicks: number; buckets: Bucket[] };
 export type Analytics = {
   totalClicks: number;
+  uniqueClicks: number;
   clicksOverTime: { date: string; clicks: number }[];
   referrers: Bucket[];
   devices: Bucket[];
-  geography: Bucket[];
 };
 export type Draft = { originalUrl: string; customAlias: string; expiresAt: string; activatesAt?: string; maxClicks?: string };

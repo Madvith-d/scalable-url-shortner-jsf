@@ -1,17 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
 import { ExternalLink, StatusBadge } from "./link-ui";
 import { ErrorState, Loading } from "./shell";
 import { useResource } from "@/lib/use-resource";
-import type { Analytics, Bucket, GeographyAnalytics, GeographyBy, ShortUrl } from "@/lib/types";
+import type { Analytics, Bucket, ShortUrl } from "@/lib/types";
 
 export function UrlAnalytics({ id }: { id: string }) {
-  const [geographyBy, setGeographyBy] = useState<GeographyBy>("country");
   const link = useResource<ShortUrl>(`/api/urls/${id}`);
   const analytics = useResource<Analytics>(`/api/urls/${id}/analytics`);
-  const geography = useResource<GeographyAnalytics>(`/api/urls/${id}/analytics/geography?by=${geographyBy}`);
   const data = analytics.data;
   const maxDailyClicks = data?.clicksOverTime.reduce((maximum, day) => Math.max(maximum, day.clicks), 1) || 1;
   return (
@@ -22,7 +19,7 @@ export function UrlAnalytics({ id }: { id: string }) {
           <h1>Link analytics</h1>
           <p>Recorded clicks for this link, across all time.</p>
         </div>
-        <button className="button secondary" onClick={() => { link.reload(); analytics.reload(); geography.reload(); }} disabled={link.loading || analytics.loading || geography.loading}>
+        <button className="button secondary" onClick={() => { link.reload(); analytics.reload(); }} disabled={link.loading || analytics.loading}>
           Refresh analytics
         </button>
       </div>
@@ -47,6 +44,11 @@ export function UrlAnalytics({ id }: { id: string }) {
               <p>Total recorded clicks</p>
               <strong>{data.totalClicks.toLocaleString()}</strong>
               <span>Successful GET redirects · All time</span>
+            </article>
+            <article className="stat-card">
+              <p>Unique clicks</p>
+              <strong>{data.uniqueClicks.toLocaleString()}</strong>
+              <span>Distinct IPs · Approximate · New clicks only</span>
             </article>
             <article className="stat-card">
               <p>Days with recorded activity</p>
@@ -108,28 +110,10 @@ export function UrlAnalytics({ id }: { id: string }) {
               total={data.totalClicks}
               description="Device categories inferred by the backend. No raw user agents are stored."
             />
-            <section className="panel breakdown-panel geography-panel" aria-labelledby="geography-title">
-              <h2 id="geography-title">Geography</h2>
-              <label className="geography-control">
-                Geography view
-                <select value={geographyBy} onChange={event => setGeographyBy(event.target.value as GeographyBy)}>
-                  <option value="country">Country</option>
-                  <option value="city">City</option>
-                </select>
-              </label>
-              {geography.loading ? (
-                <Loading message={`Loading ${geographyBy} geography…`} />
-              ) : geography.error ? (
-                <ErrorState message={geography.error} retry={geography.reload} />
-              ) : geography.data && (
-                <BucketList title={geographyBy === "country" ? "Country" : "City"} rows={geography.data.buckets} total={geography.data.totalClicks} />
-              )}
-              <p className="field-hint">Approximate IP-based location, not a precise location. Unknown means the {geographyBy} could not be determined. Top 10 · Percentages of all recorded clicks.</p>
-            </section>
           </div>
           <aside className="analytics-footnote">
             <strong>About these numbers</strong>
-            <p>Analytics are asynchronous and best effort. Totals can lag and some events may be dropped. Only persisted successful GET redirects count—not HEAD requests, failed requests, or inactive or expired links. These are clicks, not unique visitors. History remains available after deactivation or expiration.</p>
+            <p>Analytics are asynchronous and best effort. Totals can lag and some events may be dropped. Only persisted successful GET redirects count—not HEAD requests, failed requests, or inactive or expired links. Unique clicks count distinct IP addresses, so shared networks may combine visitors and changing IPs may count one visitor more than once. Historical clicks recorded before unique tracking are not included. History remains available after deactivation or expiration.</p>
           </aside>
         </>
       )}

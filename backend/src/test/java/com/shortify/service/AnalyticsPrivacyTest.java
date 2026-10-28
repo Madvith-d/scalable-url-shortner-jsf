@@ -29,16 +29,14 @@ class AnalyticsPrivacyTest {
     @Test
     void queuedTaskRetainsOnlySanitizedMetadataTimestampAndTransientIp() throws Exception {
         var clicks = mock(ClickEventRepository.class);
-        var lookup = mock(GeoLookupService.class);
         var executor = mock(ThreadPoolTaskExecutor.class);
         AtomicReference<Runnable> task = new AtomicReference<>();
         doAnswer(invocation -> { task.set(invocation.getArgument(0)); return null; }).when(executor).execute(any(Runnable.class));
         Instant requested = Instant.parse("2026-09-26T01:02:03Z");
         var analytics = new AnalyticsService(clicks, mock(ShortUrlService.class), executor,
-                Clock.fixed(requested, ZoneOffset.UTC), lookup);
-        when(lookup.lookup("8.8.8.8")).thenReturn(new GeoLocation("US", "Mountain View"));
+                Clock.fixed(requested, ZoneOffset.UTC));
         analytics.record(1L, "https://person:secret@EXAMPLE.com/private?token=secret", "private Mobile identifier", "8.8.8.8");
-        verifyNoInteractions(clicks, lookup);
+        verifyNoInteractions(clicks);
         for (var field : task.get().getClass().getDeclaredFields()) {
             field.setAccessible(true);
             Object value = field.get(task.get());
@@ -50,28 +48,25 @@ class AnalyticsPrivacyTest {
         task.get().run();
         var event = ArgumentCaptor.forClass(ClickEvent.class);
         verify(clicks).save(event.capture());
-        assertThat(event.getValue()).extracting("accessedAt", "referrer", "device", "countryCode", "city")
-                .containsExactly(requested, "example.com", "Mobile", "US", "Mountain View");
+        assertThat(event.getValue()).extracting("accessedAt", "referrer", "device", "visitorHash")
+                .containsExactly(requested, "example.com", "Mobile", "838c4c2573848f58e74332341a7ca6bc5cd86a8aec7d644137d53b4d597f10f5");
         assertThat(ClickEvent.class.getDeclaredFields()).extracting(java.lang.reflect.Field::getName)
-                .containsExactlyInAnyOrder("id", "shortUrlId", "accessedAt", "referrer", "device", "geography", "countryCode", "city");
+                .containsExactlyInAnyOrder("id", "shortUrlId", "accessedAt", "referrer", "device", "visitorHash");
     }
 
     @Test
     void lookupFailureStillSavesAndRejectedTaskNeverLooksUp() {
         var clicks = mock(ClickEventRepository.class);
-        var lookup = mock(GeoLookupService.class);
         var executor = mock(ThreadPoolTaskExecutor.class);
-        var analytics = new AnalyticsService(clicks, mock(ShortUrlService.class), executor, Clock.systemUTC(), lookup);
+        var analytics = new AnalyticsService(clicks, mock(ShortUrlService.class), executor, Clock.systemUTC());
         doThrow(new TaskRejectedException("full")).when(executor).execute(any(Runnable.class));
         analytics.record(1L, null, null, "8.8.8.8");
-        verifyNoInteractions(clicks, lookup);
+        verifyNoInteractions(clicks);
         assertThat(analytics.droppedCount()).isEqualTo(1);
         doAnswer(invocation -> { invocation.<Runnable>getArgument(0).run(); return null; }).when(executor).execute(any(Runnable.class));
-        when(lookup.lookup("8.8.8.8")).thenThrow(new IllegalStateException("provider unavailable"));
         analytics.record(1L, null, null, "8.8.8.8");
         var event = ArgumentCaptor.forClass(ClickEvent.class);
         verify(clicks).save(event.capture());
-        assertThat(event.getValue()).extracting("countryCode", "city").containsExactly(null, null);
         assertThat(analytics.droppedCount()).isEqualTo(1);
     }
 

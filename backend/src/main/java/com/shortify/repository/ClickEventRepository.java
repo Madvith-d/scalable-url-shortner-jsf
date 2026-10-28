@@ -15,6 +15,9 @@ public interface ClickEventRepository extends JpaRepository<ClickEvent, Long> {
 
     long countByShortUrlId(Long id);
 
+    @Query("select count(distinct c.visitorHash) from ClickEvent c where c.shortUrlId = :id")
+    long countUniqueVisitors(Long id);
+
     @Query(value = """
             SELECT to_char(accessed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS label, count(*) AS clicks
             FROM click_events WHERE short_url_id = :id GROUP BY label ORDER BY label
@@ -33,23 +36,4 @@ public interface ClickEventRepository extends JpaRepository<ClickEvent, Long> {
             """, nativeQuery = true)
     List<Bucket> devices(Long id);
 
-    @Query(value = """
-            SELECT coalesce(country_code, 'Unknown') AS label, count(*) AS clicks FROM click_events
-            WHERE short_url_id = :id GROUP BY label ORDER BY clicks DESC, label
-            """, nativeQuery = true)
-    List<Bucket> geography(Long id);
-
-    @Query(value = """
-            SELECT coalesce(country_code, 'Unknown') AS label, count(*) AS clicks FROM click_events
-            WHERE short_url_id = :id GROUP BY label ORDER BY clicks DESC, label LIMIT 10
-            """, nativeQuery = true)
-    List<Bucket> topCountries(Long id);
-
-    @Query(value = """
-            SELECT CASE WHEN city IS NULL THEN 'Unknown'
-                        ELSE city || ', ' || coalesce(country_code, 'Unknown') END AS label,
-                   count(*) AS clicks FROM click_events
-            WHERE short_url_id = :id GROUP BY label ORDER BY clicks DESC, label LIMIT 10
-            """, nativeQuery = true)
-    List<Bucket> topCities(Long id);
 }

@@ -28,30 +28,16 @@ public class ClickEvent {
 
     @Column(nullable = false, length = 16)
     private String device;
-
-    @Column(nullable = false, length = 64)
-    private String geography;
-
-    @Column(name = "country_code", length = 2)
-    private String countryCode;
-
-    @Column(length = 128)
-    private String city;
+    @Column(name = "visitor_hash", length = 64)
+    private String visitorHash;
 
     protected ClickEvent() { }
 
-    public ClickEvent(Long shortUrlId, Instant accessedAt, String referrer, String device,
-                      String countryCode, String city) {
-        this(shortUrlId, accessedAt, referrer, device, "Unknown");
-        this.countryCode = countryCode;
-        this.city = city;
-    }
-
-    public ClickEvent(Long shortUrlId, Instant accessedAt, String referrer, String device, String geography) {
+    public ClickEvent(Long shortUrlId, Instant accessedAt, String referrer, String device, String visitorHash) {
         this.shortUrlId = shortUrlId;
         this.accessedAt = accessedAt;
         this.referrer = referrer;
         this.device = device;
-        this.geography = geography;
+        this.visitorHash = visitorHash;
     }
 }

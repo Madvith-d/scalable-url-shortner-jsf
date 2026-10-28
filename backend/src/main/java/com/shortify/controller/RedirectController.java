@@ -48,8 +48,7 @@ public class RedirectController {
             boolean countClick = request.getMethod().equals("GET");
             admission.admit(target.id(), countClick);
             if (countClick) {
-                analytics.record(target.id(), request.getHeader("Referer"), request.getHeader("User-Agent"),
-                        clientIps.resolve(request));
+                analytics.record(target.id(), request.getHeader("Referer"), request.getHeader("User-Agent"), clientIps.resolve(request));
             }
             return ResponseEntity.status(HttpStatus.FOUND)
                     .location(URI.create(target.destination())).header("Cache-Control", "no-store").build();
