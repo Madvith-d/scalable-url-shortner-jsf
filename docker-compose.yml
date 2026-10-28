@@ -1,6 +1,5 @@
 services:
   backend:
-    profiles: [app]
     build: ./backend
     environment:
       SERVER_PORT: 8080
@@ -28,13 +27,14 @@ services:
       ANALYTICS_QUEUE_CAPACITY: ${ANALYTICS_QUEUE_CAPACITY:-1000}
       GEO_ENABLED: ${GEO_ENABLED:-true}
       GEO_DATABASE_PATH: ${GEO_DATABASE_PATH:-}
+      GEO_COUNTRY_DATABASE_PATH: ${GEO_COUNTRY_DATABASE_PATH:-}
       GEO_API_KEY: ${GEO_API_KEY:-}
       GEO_FREE_FALLBACK_ENABLED: ${GEO_FREE_FALLBACK_ENABLED:-true}
       GEO_TRUSTED_PROXIES: ${GEO_TRUSTED_PROXIES:-}
       CLEANUP_INTERVAL: ${CLEANUP_INTERVAL:-60000}
       CLEANUP_BATCH_SIZE: ${CLEANUP_BATCH_SIZE:-200}
     ports:
-      - "127.0.0.1:${SERVER_PORT:-8080}:8080"
+      - "${SERVER_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,7 +48,6 @@ services:
       start_period: 30s
 
   frontend:
-    profiles: [app]
     build:
       context: ./frontend
       args:
@@ -59,7 +58,7 @@ services:
       HOSTNAME: 0.0.0.0
       NEXT_TELEMETRY_DISABLED: 1
     ports:
-      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+      - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
       backend:
         condition: service_healthy

@@ -286,19 +286,21 @@ It returns `{ "totalClicks": 12, "buckets": [{ "label": "US", "clicks": 8 }] }`,
 | --- | --- | --- |
 | `GEO_ENABLED` | `true` | Enable lookup; false skips address extraction and records Unknown |
 | `GEO_DATABASE_PATH` | Empty | Native backend path to a readable MaxMind-compatible city MMDB file |
-| `GEO_DATABASE_FILE` | Unset | Host MMDB file mounted by the optional Compose override |
+| `GEO_COUNTRY_DATABASE_PATH` | Empty | Optional native backend path to a MaxMind-compatible country MMDB, consulted when the city record has no country |
+| `GEO_DATABASE_FILE` | Unset | Host city MMDB file mounted by the optional Compose override; defaults to the bundled `locationdb/dbip-city-lite-2026-10.mmdb` |
+| `GEO_COUNTRY_DATABASE_FILE` | Unset | Host country MMDB file mounted by the optional Compose override; defaults to the bundled `locationdb/dbip-country-lite-2026-10.mmdb` |
 | `GEO_API_KEY` | Empty | Paid ip-api HTTPS key; when set, takes precedence over the free fallback |
 | `GEO_FREE_FALLBACK_ENABLED` | `true` | Use keyless ipwho.is HTTPS lookup when no paid key exists and local city data is missing |
 | `GEO_TRUSTED_PROXIES` | Empty | Comma-separated trusted proxy CIDRs, for analytics IP extraction only |
 
-1. Obtain a city database, such as **GeoLite2 City**, through [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data/), following its account, license, attribution, and update requirements. Keep the file outside Git. For a native backend set `GEO_DATABASE_PATH` to the downloaded file. The reader is reused until application restart; restart after replacing the file to load updates.
-2. For Docker, set `GEO_DATABASE_FILE` in the ignored root `.env` to the absolute host path. Ensure the non-root container user can read it, then run:
+1. Use a city database such as **GeoLite2 City** from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data/), or the bundled **DB-IP City Lite** file at `locationdb/dbip-city-lite-2026-10.mmdb` (DB-IP Lite has its own attribution and usage terms). An optional country MMDB at `locationdb/dbip-country-lite-2026-10.mmdb` adds a local country fallback when the city record has no country. Keep external databases outside Git (`*.mmdb` is ignored). For a native backend set `GEO_DATABASE_PATH` (and optionally `GEO_COUNTRY_DATABASE_PATH`) to the file. The readers are reused until application restart; restart after replacing files to load updates.
+2. For Docker, the optional override mounts the bundled `locationdb/*.mmdb` files read-only by default. Override them by setting `GEO_DATABASE_FILE` / `GEO_COUNTRY_DATABASE_FILE` in the ignored root `.env` to absolute host paths (ensure the non-root container user can read them), then run:
 
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.geo.yml --profile app up -d --build --wait
    ```
 
-   The optional override mounts the existing file read-only and sets the container path. A missing source file fails the mount rather than creating an empty directory. The default Compose file remains usable without any database.
+   The optional override mounts both files read-only and sets stable container paths (`/opt/geoip/city.mmdb`, `/opt/geoip/country.mmdb`). A missing source file fails the mount rather than creating an empty directory. The default Compose file remains usable without any database.
 3. Without a paid key, the enabled-by-default **ipwho.is HTTPS fallback** requests only `success`, `country_code`, and `city`, so public-IP lookups work without provisioning a database/key. **It sends the visitor's public IP to an external provider.** Set `GEO_FREE_FALLBACK_ENABLED=false` for local-only operation without a key. Review [ipwho.is usage terms and limits](https://ipwhois.io/): the free service is intended for non-commercial use; use a licensed local database or paid provider for production/commercial workloads as appropriate. Disclose external processing in your privacy notice.
 4. To use paid ip-api instead, put its key in `GEO_API_KEY` in the ignored server-side `.env`. Never place it in `NEXT_PUBLIC_*`, frontend files, committed configuration, or chat. Only `status`, `countryCode`, and `city` are requested over HTTPS. Both external modes have a maximum 1.5-second timeout and no per-click retry. The free **HTTP** ip-api endpoint is never used. A configured paid key does not silently fail over to another provider.
 5. With the free fallback disabled and neither a readable database nor a key, the app starts but records Unknown and warns that no lookup source exists. Missing/corrupt local data and failed remote lookups do not stop redirects; any usable local country is retained when fallback fails. Provider errors/rate limits trigger temporary backoff, with sanitized warnings (no visitor IPs, keys, or response bodies). Historical Unknown events cannot be backfilled because raw IPs were never stored.
