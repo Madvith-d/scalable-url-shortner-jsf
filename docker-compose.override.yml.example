@@ -1,0 +1,18 @@
+# Optional: Rename or copy this to docker-compose.override.yml for local development
+# if you want direct access to services via localhost ports on your machine.
+services:
+  backend:
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+
+  frontend:
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+
+  redis:
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+
+  postgres:
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
