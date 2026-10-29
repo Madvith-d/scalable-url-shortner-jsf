@@ -8,12 +8,13 @@ import { CopyButton, ExternalLink, StatusBadge } from "./link-ui";
 import { ErrorState, Loading } from "./shell";
 import { formatDate } from "@/lib/helpers";
 import { useResource } from "@/lib/use-resource";
-import type { UrlPage } from "@/lib/types";
+import type { ShortUrl, UrlPage } from "@/lib/types";
 
 export function Dashboard() {
   const [page, setPage] = useState(0);
   const [size, setSize] = useState(10);
   const { data, loading, error, reload } = useResource<UrlPage>(`/api/urls?page=${page}&size=${size}`);
+  const topLinks = useResource<ShortUrl[]>("/api/urls/top");
   return (
     <div className="container workspace">
       <div className="page-heading">
@@ -23,6 +24,19 @@ export function Dashboard() {
         </div>
         <a href="#new-link" className="button">New short link</a>
       </div>
+      <section className="panel top-links-panel" aria-labelledby="top-links-title">
+        <div className="panel-heading"><h2 id="top-links-title">Top links</h2><span className="quiet-label">By clicks served</span></div>
+        {topLinks.loading ? <Loading message="Loading top links…" /> : topLinks.error ? <ErrorState message={topLinks.error} retry={topLinks.reload} /> : topLinks.data?.length ? (
+          <ol className="top-links-list">
+            {topLinks.data.map((url, index) => <li key={url.id}>
+              <span className="top-link-rank">{index + 1}</span>
+              <div className="top-link-main"><ExternalLink className="short-link" href={url.shortUrl}>{url.shortUrl}</ExternalLink><span className="destination" title={url.originalUrl}>{url.originalUrl}</span></div>
+              <strong className="top-link-count">{(url.clickCount ?? 0).toLocaleString()} clicks</strong>
+              <Link className="text-link" href={`/urls/${url.id}/analytics`}>Analytics<span className="sr-only"> for {url.shortCode}</span></Link>
+            </li>)}
+          </ol>
+        ) : <p className="chart-empty top-links-empty">Your top links will appear after they receive clicks.</p>}
+      </section>
       <section className="panel" aria-labelledby="links-title">
         <div className="panel-heading">
           <h2 id="links-title">All links {data && <span className="count-pill">{data.totalElements.toLocaleString()}</span>}</h2>

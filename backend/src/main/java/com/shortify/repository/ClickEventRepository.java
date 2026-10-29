@@ -15,6 +15,8 @@ public interface ClickEventRepository extends JpaRepository<ClickEvent, Long> {
 
     long countByShortUrlId(Long id);
 
+    long countByShortUrlIdAndVisitorHashIsNotNull(Long id);
+
     @Query("select count(distinct c.visitorHash) from ClickEvent c where c.shortUrlId = :id")
     long countUniqueVisitors(Long id);
 
@@ -23,6 +25,22 @@ public interface ClickEventRepository extends JpaRepository<ClickEvent, Long> {
             FROM click_events WHERE short_url_id = :id GROUP BY label ORDER BY label
             """, nativeQuery = true)
     List<Bucket> clicksOverTime(Long id);
+
+    @Query(value = """
+            SELECT to_char(accessed_at AT TIME ZONE 'UTC', 'HH24') AS label, count(*) AS clicks
+            FROM click_events WHERE short_url_id = :id GROUP BY label ORDER BY label
+            """, nativeQuery = true)
+    List<Bucket> clicksByHour(Long id);
+
+    @Query(value = """
+            SELECT CASE EXTRACT(ISODOW FROM accessed_at AT TIME ZONE 'UTC')
+                WHEN 1 THEN 'Mon' WHEN 2 THEN 'Tue' WHEN 3 THEN 'Wed' WHEN 4 THEN 'Thu'
+                WHEN 5 THEN 'Fri' WHEN 6 THEN 'Sat' ELSE 'Sun' END AS label, count(*) AS clicks
+            FROM click_events WHERE short_url_id = :id
+            GROUP BY EXTRACT(ISODOW FROM accessed_at AT TIME ZONE 'UTC')
+            ORDER BY EXTRACT(ISODOW FROM accessed_at AT TIME ZONE 'UTC')
+            """, nativeQuery = true)
+    List<Bucket> clicksByWeekday(Long id);
 
     @Query(value = """
             SELECT referrer AS label, count(*) AS clicks FROM click_events

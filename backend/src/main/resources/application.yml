@@ -35,7 +35,7 @@ shortify:
   analytics:
     workers: ${ANALYTICS_WORKERS:2}
     queue-capacity: ${ANALYTICS_QUEUE_CAPACITY:1000}
-    trusted-proxies: ${ANALYTICS_TRUSTED_PROXIES:}
+    trusted-proxies: ${ANALYTICS_TRUSTED_PROXIES:${GEO_TRUSTED_PROXIES:}}
   cleanup:
     interval: ${CLEANUP_INTERVAL:60000}
     batch-size: ${CLEANUP_BATCH_SIZE:200}

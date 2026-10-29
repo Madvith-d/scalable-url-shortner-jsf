@@ -1,6 +1,7 @@
 package com.shortify.controller;
 
 import java.net.URI;
+import java.util.List;
 
 import com.shortify.dto.AnalyticsResponse;
 import com.shortify.dto.CreateShortUrlRequest;
@@ -48,6 +49,11 @@ public class ShortUrlController {
     public ShortUrlPage list(@RequestParam(defaultValue = "0") int page,
                              @RequestParam(defaultValue = "20") int size) {
         return service.list(page, size);
+    }
+
+    @GetMapping("/top")
+    public List<ShortUrlResponse> topLinks() {
+        return service.topLinks();
     }
 
     @PatchMapping("/{id}")

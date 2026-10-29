@@ -216,13 +216,18 @@ All application, authentication/authorization, and CORS errors use the same four
 {
   "totalClicks": 2,
   "uniqueClicks": 1,
+  "trackedClicks": 2,
   "clicksOverTime": [{"date": "2026-09-26", "clicks": 2}],
+  "hourlyClicks": [{"label": "14", "clicks": 2}],
+  "weekdayClicks": [{"label": "Sat", "clicks": 2}],
   "referrers": [{"label": "example.com", "clicks": 2}],
   "devices": [{"label": "Mobile", "clicks": 2}]
 }
 ```
 
-An unclicked URL returns `totalClicks: 0`, `uniqueClicks: 0`, and three empty arrays. Unique clicks count distinct IP hashes for new events; existing events have no visitor hash and changing IPs/shared networks make this an approximation. This is a lifetime aggregate, without query parameters: UTC calendar days ascending, no zero-filled days; category buckets sorted by clicks descending, then label ascending. PostgreSQL performs `COUNT`/`GROUP BY`; raw events are never fetched into application memory for aggregation. The ownership check and aggregate queries use one read-only repeatable-read snapshot. Counts include persisted successful GET redirects only, not HEAD, missing/inactive/expired URLs, rejected requests, or failed/dropped analytics tasks. Async arrival means counts may lag the redirect. Inactive/expired URLs retain analytics and remain owner-readable.
+An unclicked URL returns zero counts and five empty arrays. `trackedClicks` counts events with a resolved client IP; repeat click rate is estimated from tracked clicks minus distinct IP hashes. Existing events have no visitor hash, and changing IPs/shared networks make unique and repeat estimates approximate. This is a lifetime aggregate, without query parameters: daily clicks are grouped by UTC date, hourly clicks by UTC hour (`00`–`23`), weekday clicks use UTC weekday labels in Monday-first order, and category buckets sort by clicks descending then label ascending. PostgreSQL performs `COUNT`/`GROUP BY`; raw events are never fetched into application memory for aggregation. The ownership check and aggregate queries use one read-only repeatable-read snapshot. Counts include persisted successful GET redirects only, not HEAD, missing/inactive/expired URLs, rejected requests, or failed/dropped analytics tasks. Async arrival means counts may lag the redirect. Inactive/expired URLs retain analytics and remain owner-readable.
+
+`GET /api/urls/top` requires authentication and returns up to five of the owner's links with clicks, sorted by served click count descending. Links with no clicks are omitted.
 
 V3 adds `click_events` (URL foreign key, access timestamp, referrer host, device, and a legacy geography field), an URL/time index, and an active-expiry cleanup index. V4 adds nullable legacy country/city fields; these fields remain for existing row compatibility, but new rows use `Unknown` and location data is no longer exposed. V6 adds nullable visitor hashes for unique-click aggregation. Management and cleanup only deactivate: URL IDs, ownership, and click history remain intact. Physical deletion, used by test cleanup, cascades click rows.
 
@@ -268,7 +273,7 @@ Redis read/write errors or corrupt payloads fall back to PostgreSQL; cache failu
 
 ## Unique click IP handling
 
-Unique click counts use a validated client IP only to produce a link-scoped HMAC-SHA256 value in the asynchronous analytics worker. The application secret is the HMAC key, so database readers cannot cheaply reverse the hash by enumerating IPs or correlate a visitor across links. Rotating `JWT_SECRET` changes future hashes and may make unique counts undercount prior visitors. Location lookup and external provider calls have been removed. Behind a reverse proxy, set `ANALYTICS_TRUSTED_PROXIES` to the proxy CIDRs so the resolver can safely identify the visitor from `X-Forwarded-For`; an empty value uses only the socket peer. Forwarded headers from untrusted peers are ignored. The frontend does not proxy public redirects.
+Unique click counts use a validated client IP only to produce a link-scoped HMAC-SHA256 value in the asynchronous analytics worker. The application secret is the HMAC key, so database readers cannot cheaply reverse the hash by enumerating IPs or correlate a visitor across links. Rotating `JWT_SECRET` changes future hashes and may make unique counts undercount prior visitors. Location lookup and external provider calls have been removed. Behind a reverse proxy, set `ANALYTICS_TRUSTED_PROXIES` to the proxy CIDRs so the resolver can safely identify the visitor from `X-Forwarded-For`; the legacy `GEO_TRUSTED_PROXIES` setting is accepted as a fallback. An empty value uses only the socket peer. Forwarded headers from untrusted peers are ignored. The frontend does not proxy public redirects.
 
 Shared networks may combine visitors, and changing IPs may count one visitor more than once. Historical click rows have no visitor hash, so unique-click counts cover newly recorded clicks only.
 

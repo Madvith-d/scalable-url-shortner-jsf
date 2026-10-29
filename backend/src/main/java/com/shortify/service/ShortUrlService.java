@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 
 import com.shortify.dto.CreateShortUrlRequest;
 import com.shortify.dto.ShortUrlPage;
@@ -147,6 +148,11 @@ public class ShortUrlService {
         var result = repository.findAllByUserId(userId, PageRequest.of(page, size, Sort.by("id").descending()));
         return new ShortUrlPage(result.getContent().stream().map(this::response).toList(), page, size,
                 result.getTotalElements(), result.getTotalPages());
+    }
+
+    public List<ShortUrlResponse> topLinks() {
+        return repository.findTop5ByUserIdAndClickCountGreaterThanOrderByClickCountDescIdDesc(
+                currentUser.requireId(), 0).stream().map(this::response).toList();
     }
 
     public ShortUrl requireOwned(Long id) {

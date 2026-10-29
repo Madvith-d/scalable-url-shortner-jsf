@@ -9,6 +9,7 @@ import {
 import { ExternalLink, StatusBadge } from "./link-ui";
 import { ErrorState, Loading } from "./shell";
 import { useResource } from "@/lib/use-resource";
+import { compareClicks, fillBuckets } from "@/lib/analytics";
 import type { Analytics, Bucket, ShortUrl } from "@/lib/types";
 
 const periods = [
@@ -25,6 +26,7 @@ export function UrlAnalytics({ id }: { id: string }) {
   const analytics = useResource<Analytics>(`/api/urls/${id}/analytics`);
   const data = analytics.data;
   const activity = data ? activityForPeriod(data.clicksOverTime, period) : null;
+  const comparison = data ? compareClicks(data.clicksOverTime, period) : null;
   return (
     <div className="container workspace analytics-page">
       <Link className="back-link" href={`/urls/${id}`}>Link details</Link>
@@ -65,6 +67,11 @@ export function UrlAnalytics({ id }: { id: string }) {
               <span>Distinct IPs · Approximate · New clicks only</span>
             </article>
             <article className="stat-card">
+              <p>Repeat click rate</p>
+              <strong>{data.trackedClicks ? `${Math.round(Math.max(0, data.trackedClicks - data.uniqueClicks) / data.trackedClicks * 100)}%` : "—"}</strong>
+              <span>{data.trackedClicks ? `${Math.max(0, data.trackedClicks - data.uniqueClicks).toLocaleString()} repeat clicks of ${data.trackedClicks.toLocaleString()} IP-tracked · Approximate` : "Available after client IPs can be resolved"}</span>
+            </article>
+            <article className="stat-card">
               <p>Days with recorded activity</p>
               <strong>{data.clicksOverTime.length.toLocaleString()}</strong>
               <span>UTC days with at least one click</span>
@@ -97,7 +104,9 @@ export function UrlAnalytics({ id }: { id: string }) {
               <div className="daily-chart">
                 <div className="chart-summary">
                   <strong>{activity!.total.toLocaleString()} clicks</strong>
-                  <span>{formatChartDate(activity!.start)} – {formatChartDate(activity!.end)} UTC</span>
+                  <span>{formatChartDate(activity!.start)} – {formatChartDate(activity!.end)} UTC · {comparison!.previous === 0
+                    ? comparison!.current > 0 ? "New activity vs previous period" : "No previous-period activity"
+                    : `${comparison!.current >= comparison!.previous ? "+" : ""}${Math.round((comparison!.current - comparison!.previous) / comparison!.previous * 100)}% vs previous period (${comparison!.previous.toLocaleString()})`}</span>
                 </div>
                 <ClickChart points={activity!.points} period={period} />
                 {activity!.total === 0 && <p className="chart-period-empty">No clicks in this period.</p>}
@@ -126,6 +135,13 @@ export function UrlAnalytics({ id }: { id: string }) {
             ) : (
               <p className="chart-empty">Daily activity will appear after the first recorded click.</p>
             )}
+          </section>
+          <section className="panel time-patterns-panel" aria-labelledby="time-patterns-title">
+            <div className="panel-heading"><h2 id="time-patterns-title">When clicks happen</h2><span className="quiet-label">All recorded clicks · UTC</span></div>
+            <div className="time-patterns-grid">
+              <PatternChart title="By hour" rows={fillBuckets(data.hourlyClicks, Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, "0")))} />
+              <PatternChart title="By weekday" rows={fillBuckets(data.weekdayClicks, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])} />
+            </div>
           </section>
           <div className="breakdown-grid">
             <Breakdown
@@ -245,6 +261,28 @@ function BreakdownTooltip({ active, payload, total }: { active?: boolean; payloa
   const row = payload?.[0]?.payload;
   if (!active || !row) return null;
   return <div className="chart-tooltip"><span>{row.label}</span><strong>{row.clicks.toLocaleString()} clicks · {total ? Math.round(row.clicks / total * 100) : 0}%</strong></div>;
+}
+
+function PatternChart({ title, rows }: { title: string; rows: Bucket[] }) {
+  return <div className="pattern-chart-panel" role="img" aria-label={`Clicks ${title.toLowerCase()}`}>
+    <h3>{title}</h3>
+    <div className="pattern-chart">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={rows} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+          <CartesianGrid vertical={false} stroke="var(--line)" />
+          <XAxis dataKey="label" tickLine={false} axisLine={false} minTickGap={8} tick={{ fill: "var(--muted)", fontSize: 10 }} />
+          <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={38} tick={{ fill: "var(--muted)", fontSize: 10 }} />
+          <Tooltip content={<PatternTooltip />} cursor={{ fill: "var(--accent-soft)" }} />
+          <Bar dataKey="clicks" fill="var(--accent)" radius={[3, 3, 0, 0]} maxBarSize={24} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  </div>;
+}
+
+function PatternTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value?: number }>; label?: string }) {
+  if (!active || !payload?.length || !label) return null;
+  return <div className="chart-tooltip"><span>{label}{/^\d{2}$/.test(label) ? ":00 UTC" : ""}</span><strong>{Number(payload[0].value ?? 0).toLocaleString()} clicks</strong></div>;
 }
 
 function BucketList({ title, rows, total }: { title: string; rows: Bucket[]; total: number }) {

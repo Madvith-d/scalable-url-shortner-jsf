@@ -31,7 +31,10 @@ export type Bucket = { label: string; clicks: number };
 export type Analytics = {
   totalClicks: number;
   uniqueClicks: number;
+  trackedClicks: number;
   clicksOverTime: { date: string; clicks: number }[];
+  hourlyClicks: Bucket[];
+  weekdayClicks: Bucket[];
   referrers: Bucket[];
   devices: Bucket[];
 };

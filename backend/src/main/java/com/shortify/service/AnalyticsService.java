@@ -74,8 +74,10 @@ public class AnalyticsService {
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public AnalyticsResponse get(Long id) {
         urls.requireOwned(id);
-        return new AnalyticsResponse(clicks.countByShortUrlId(id), clicks.countUniqueVisitors(id), clicks.clicksOverTime(id).stream()
+        return new AnalyticsResponse(clicks.countByShortUrlId(id), clicks.countUniqueVisitors(id),
+                clicks.countByShortUrlIdAndVisitorHashIsNotNull(id), clicks.clicksOverTime(id).stream()
                 .map(row -> new AnalyticsResponse.Day(row.getLabel(), row.getClicks())).toList(),
+                buckets(clicks.clicksByHour(id)), buckets(clicks.clicksByWeekday(id)),
                 buckets(clicks.referrers(id)), buckets(clicks.devices(id)));
     }
 

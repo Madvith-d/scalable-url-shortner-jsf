@@ -44,4 +44,6 @@ public interface ShortUrlRepository extends JpaRepository<ShortUrl, Long> {
     Optional<ShortUrl> findByIdAndUserId(Long id, Long userId);
 
     Page<ShortUrl> findAllByUserId(Long userId, Pageable pageable);
+
+    List<ShortUrl> findTop5ByUserIdAndClickCountGreaterThanOrderByClickCountDescIdDesc(Long userId, long minimumClicks);
 }

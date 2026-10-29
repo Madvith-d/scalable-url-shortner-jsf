@@ -220,9 +220,10 @@ class Phase4ApiIT extends RedisIntegrationSupport {
         var response = send("GET", "/api/urls/" + url.getId() + "/analytics", null, token);
         JsonNode body = mapper.readTree(response.body());
         assertThat(response.statusCode()).isEqualTo(200);
-        assertThat(body.size()).isEqualTo(5);
+        assertThat(body.size()).isEqualTo(8);
         assertThat(body.path("totalClicks").asLong()).isEqualTo(1);
         assertThat(body.path("uniqueClicks").asLong()).isZero();
+        assertThat(body.path("trackedClicks").asLong()).isZero();
         assertThat(body.path("clicksOverTime").get(0).path("date").asText()).matches("\\d{4}-\\d{2}-\\d{2}");
         assertThat(body.path("referrers").get(0)).isEqualTo(mapper.valueToTree(Map.of("label", "example.com", "clicks", 1)));
         assertThat(body.path("devices").get(0).path("label").asText()).isEqualTo("Mobile");
@@ -267,17 +268,45 @@ class Phase4ApiIT extends RedisIntegrationSupport {
         clicks.saveAllAndFlush(List.of(
                 new com.shortify.entity.ClickEvent(url.getId(), Instant.parse("2026-01-01T23:59:59Z"), "Direct", "Desktop", "same-visitor"),
                 new com.shortify.entity.ClickEvent(url.getId(), Instant.parse("2026-01-02T00:00:00Z"), "example.com", "Mobile", "same-visitor"),
-                new com.shortify.entity.ClickEvent(url.getId(), Instant.parse("2026-01-02T01:00:00Z"), "example.com", "Mobile", "other-visitor")));
+                new com.shortify.entity.ClickEvent(url.getId(), Instant.parse("2026-01-02T01:00:00Z"), "example.com", "Mobile", "other-visitor"),
+                new com.shortify.entity.ClickEvent(url.getId(), Instant.parse("2026-01-02T02:00:00Z"), "example.com", "Mobile", null)));
         clearInvocations(clicks);
         JsonNode body = mapper.readTree(send("GET", "/api/urls/" + url.getId() + "/analytics", null, token).body());
-        assertThat(body.path("totalClicks").asLong()).isEqualTo(3);
+        assertThat(body.path("totalClicks").asLong()).isEqualTo(4);
         assertThat(body.path("uniqueClicks").asLong()).isEqualTo(2);
+        assertThat(body.path("trackedClicks").asLong()).isEqualTo(3);
         assertThat(body.path("clicksOverTime")).isEqualTo(mapper.valueToTree(List.of(
-                Map.of("date", "2026-01-01", "clicks", 1), Map.of("date", "2026-01-02", "clicks", 2))));
+                Map.of("date", "2026-01-01", "clicks", 1), Map.of("date", "2026-01-02", "clicks", 3))));
+        assertThat(body.path("hourlyClicks")).isEqualTo(mapper.valueToTree(List.of(
+                Map.of("label", "00", "clicks", 1), Map.of("label", "01", "clicks", 1),
+                Map.of("label", "02", "clicks", 1), Map.of("label", "23", "clicks", 1))));
+        assertThat(body.path("weekdayClicks")).isEqualTo(mapper.valueToTree(List.of(
+                Map.of("label", "Thu", "clicks", 1), Map.of("label", "Fri", "clicks", 3))));
         assertThat(body.path("referrers")).isEqualTo(mapper.valueToTree(List.of(
-                Map.of("label", "example.com", "clicks", 2), Map.of("label", "Direct", "clicks", 1))));
-        assertThat(body.path("devices").get(0)).isEqualTo(mapper.valueToTree(Map.of("label", "Mobile", "clicks", 2)));
+                Map.of("label", "example.com", "clicks", 3), Map.of("label", "Direct", "clicks", 1))));
+        assertThat(body.path("devices").get(0)).isEqualTo(mapper.valueToTree(Map.of("label", "Mobile", "clicks", 3)));
         verify(clicks, never()).findAll();
+    }
+
+    @Test
+    void topLinksAreOwnerScopedAndSortedAcrossAllLinks() throws Exception {
+        var lower = create(null);
+        var higher = create(null);
+        var highest = create(null);
+        jdbc.update("UPDATE short_urls SET click_count = 2 WHERE id = ?", lower.getId());
+        jdbc.update("UPDATE short_urls SET click_count = 5 WHERE id = ?", higher.getId());
+        jdbc.update("UPDATE short_urls SET click_count = 9 WHERE id = ?", highest.getId());
+        String other = register();
+        owner = ownerIds.getLast();
+        create(null);
+
+        JsonNode body = mapper.readTree(send("GET", "/api/urls/top", null, token).body());
+        assertThat(body).hasSize(3);
+        assertThat(body.get(0).path("id").asLong()).isEqualTo(highest.getId());
+        assertThat(body.get(1).path("id").asLong()).isEqualTo(higher.getId());
+        assertThat(body.get(2).path("id").asLong()).isEqualTo(lower.getId());
+        assertThat(send("GET", "/api/urls/top", null, other).statusCode()).isEqualTo(200);
+        assertThat(send("GET", "/api/urls/top", null, null).statusCode()).isEqualTo(401);
     }
 
     @Test
@@ -290,7 +319,7 @@ class Phase4ApiIT extends RedisIntegrationSupport {
         JsonNode body = mapper.readTree(send("GET", "/api/urls/" + url.getId() + "/analytics", null, token).body());
         assertThat(body.path("totalClicks").asLong()).isZero();
         assertThat(body.path("uniqueClicks").asLong()).isZero();
-        for (String field : List.of("clicksOverTime", "referrers", "devices")) {
+        for (String field : List.of("clicksOverTime", "referrers", "devices", "hourlyClicks", "weekdayClicks")) {
             assertThat(body.path(field).isArray()).isTrue();
             assertThat(body.path(field).size()).isZero();
         }
