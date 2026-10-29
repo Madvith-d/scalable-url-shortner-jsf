@@ -101,6 +101,9 @@
   .analytics-link { padding: 14px 16px; flex-wrap: wrap; gap: 10px; }
   .analytics-link .short-link { flex-basis: 100%; min-height: 40px; display: flex; align-items: center; }
   .daily-chart { padding: 12px 16px 20px; }
+  .chart-range-control { width: 100%; }
+  .chart-range-control select { width: 100%; }
+  .chart-summary { align-items: flex-start; flex-direction: column; gap: 2px; }
   .activity-table { font-size: 12px; }
   .activity-table th, .activity-table td { padding: 10px 5px; }
   .activity-table th:first-child { width: 90px; }

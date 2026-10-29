@@ -51,7 +51,7 @@ Client validation checks common URI errors, aliases/reserved names, expiration b
 
 Expiration input uses the browser's local timezone and is sent as an ISO UTC instant. Detail timestamps are labeled UTC. Past expiration is intentionally accepted with a warning; reactivation never overrides expiration. The toggle explains the backend's default bounded cache delay.
 
-Summary statistics come from `/api/urls/{id}/analytics`. Daily rows use UTC dates and only recorded days, without fabricated zero-filled periods. Categories show counts and rounded percentages of the returned lifetime total. Unique clicks count distinct IP addresses for newly recorded clicks; shared networks can combine visitors and changing IPs can count one visitor more than once. Counts are successful persisted GET redirect events and may lag or drop because processing is asynchronous and best effort. Inactive/expired links retain history.
+Summary statistics come from `/api/urls/{id}/analytics`. The clicks chart supports 7, 30, 90, 365-day, and all-time periods; missing dates appear as zero in the chart, while its expandable table lists only recorded days. Categories show counts and rounded percentages of the returned lifetime total. Unique clicks count distinct IP addresses for newly recorded clicks; shared networks can combine visitors and changing IPs can count one visitor more than once. Counts are successful persisted GET redirect events and may lag or drop because processing is asynchronous and best effort. Inactive/expired links retain history.
 
 ## UI and accessibility
 

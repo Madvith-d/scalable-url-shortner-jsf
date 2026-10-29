@@ -307,6 +307,20 @@
   .analytics-empty p { margin-bottom: 0; }
   .quiet-label { color: var(--muted); font-size: 12px; white-space: nowrap; }
   .daily-chart { padding: 16px 24px 24px; }
+  .chart-range-control select { width: 168px; min-height: 40px; padding-block: 7px; }
+  .chart-table-details summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .chart-summary { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 0 0 4px; font-variant-numeric: tabular-nums; }
+  .chart-summary strong { font-size: 18px; font-weight: 600; }
+  .chart-summary span { color: var(--muted); font-size: 12px; }
+  .click-chart-wrap { width: 100%; height: 280px; }
+  .click-chart-wrap .recharts-wrapper:focus, .breakdown-chart .recharts-wrapper:focus { outline: none; }
+  .chart-tooltip { display: grid; gap: 3px; min-width: 112px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 4px 14px rgb(0 0 0 / .14); font-variant-numeric: tabular-nums; }
+  .chart-tooltip span { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .chart-tooltip strong { color: var(--ink); font-size: 13px; white-space: nowrap; }
+  .chart-period-empty { margin: -4px 0 12px; color: var(--muted); font-size: 13px; text-align: center; }
+  .chart-table-details { margin-top: 12px; border-top: 1px solid var(--line); }
+  .chart-table-details summary { width: fit-content; padding-top: 14px; color: var(--accent); font-size: 13px; cursor: pointer; }
+  .chart-table-details .field-hint { margin: 12px 0 0; }
   .chart-scroll { max-height: 380px; overflow-y: auto; margin-top: 16px; }
   .activity-table { table-layout: fixed; font-size: 13px; }
   .activity-table th, .activity-table td { padding: 10px; }
@@ -329,6 +343,9 @@
   .bucket-label { overflow-wrap: anywhere; min-width: 0; }
   .bucket-list li > div > span:last-child { white-space: nowrap; }
   .bucket-percent { margin-left: 6px; color: var(--muted); font-size: 12px; }
+  .breakdown-chart { width: 100%; max-height: 340px; margin-top: 12px; overflow-y: auto; }
+  .bucket-details { margin-top: 12px; border-top: 1px solid var(--line); }
+  .bucket-details summary { width: fit-content; padding-top: 12px; color: var(--accent); font-size: 13px; cursor: pointer; }
   .analytics-footnote { padding-top: 24px; color: var(--muted); font-size: 12px; }
   .analytics-footnote p { margin: 6px 0 0; line-height: 1.7; }
 
