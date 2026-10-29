@@ -19,7 +19,7 @@ class OwnershipMigrationIT extends RedisIntegrationSupport {
     private DataSource dataSource;
 
     @Test
-    void v4PreservesV3ClickHistoryAndAddsOnlyNullableCountryAndCity() {
+    void migrationsPreserveV3ClickHistoryAndAddNullableMetadata() {
         String schema = "migration_" + UUID.randomUUID().toString().replace("-", "");
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
         try {
@@ -36,8 +36,9 @@ class OwnershipMigrationIT extends RedisIntegrationSupport {
             assertThat(migratedUrl).containsEntry("activates_at", null).containsEntry("max_clicks", null)
                     .containsEntry("click_count", 1L);
             var after = jdbc.queryForMap("SELECT * FROM " + schema + ".click_events");
-            assertThat(after).containsAllEntriesOf(before).containsEntry("country_code", null).containsEntry("city", null);
-            assertThat(after).hasSize(before.size() + 2);
+            assertThat(after).containsAllEntriesOf(before).containsEntry("country_code", null).containsEntry("city", null)
+                    .containsEntry("visitor_hash", null);
+            assertThat(after).hasSize(before.size() + 3);
             var columns = jdbc.queryForList("SELECT column_name, character_maximum_length, is_nullable "
                     + "FROM information_schema.columns WHERE table_schema = ? AND table_name = 'click_events' "
                     + "AND column_name IN ('country_code', 'city') ORDER BY column_name", schema);

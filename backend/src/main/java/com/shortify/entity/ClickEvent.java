@@ -28,6 +28,8 @@ public class ClickEvent {
 
     @Column(nullable = false, length = 16)
     private String device;
+    @Column(name = "geography", nullable = false, length = 64)
+    private String legacyGeography = "Unknown";
     @Column(name = "visitor_hash", length = 64)
     private String visitorHash;
 

@@ -214,17 +214,18 @@ class Phase4ApiIT extends RedisIntegrationSupport {
                 .containsEntry("geography", "Unknown");
         assertThat(rows.toString()).doesNotContain("secret", "private", "198.51.100.9", "PrivateCountry");
         assertThat(rows.getFirst().keySet()).containsExactlyInAnyOrder("id", "short_url_id", "accessed_at", "referrer", "device",
-                "geography", "country_code", "city");
+                "geography", "country_code", "city", "visitor_hash");
         assertThat(rows.getFirst()).containsEntry("country_code", null).containsEntry("city", null);
+        assertThat(rows.getFirst()).containsEntry("visitor_hash", null);
         var response = send("GET", "/api/urls/" + url.getId() + "/analytics", null, token);
         JsonNode body = mapper.readTree(response.body());
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(body.size()).isEqualTo(5);
         assertThat(body.path("totalClicks").asLong()).isEqualTo(1);
+        assertThat(body.path("uniqueClicks").asLong()).isZero();
         assertThat(body.path("clicksOverTime").get(0).path("date").asText()).matches("\\d{4}-\\d{2}-\\d{2}");
         assertThat(body.path("referrers").get(0)).isEqualTo(mapper.valueToTree(Map.of("label", "example.com", "clicks", 1)));
         assertThat(body.path("devices").get(0).path("label").asText()).isEqualTo("Mobile");
-        assertThat(body.path("geography").get(0).path("label").asText()).isEqualTo("Unknown");
         String other = register();
         assertThat(send("GET", "/api/urls/" + url.getId() + "/analytics", null, other).statusCode()).isEqualTo(404);
         assertThat(get("/api/urls/" + url.getId() + "/analytics").statusCode()).isEqualTo(401);
@@ -264,18 +265,18 @@ class Phase4ApiIT extends RedisIntegrationSupport {
     void aggregateQueriesGroupUtcDaysAndCategoriesWithoutLoadingRawEvents() throws Exception {
         var url = create(null);
         clicks.saveAllAndFlush(List.of(
-                new com.shortify.entity.ClickEvent(url.getId(), Instant.parse("2026-01-01T23:59:59Z"), "Direct", "Desktop", "Unknown"),
-                new com.shortify.entity.ClickEvent(url.getId(), Instant.parse("2026-01-02T00:00:00Z"), "example.com", "Mobile", "Unknown"),
-                new com.shortify.entity.ClickEvent(url.getId(), Instant.parse("2026-01-02T01:00:00Z"), "example.com", "Mobile", "Unknown")));
+                new com.shortify.entity.ClickEvent(url.getId(), Instant.parse("2026-01-01T23:59:59Z"), "Direct", "Desktop", "same-visitor"),
+                new com.shortify.entity.ClickEvent(url.getId(), Instant.parse("2026-01-02T00:00:00Z"), "example.com", "Mobile", "same-visitor"),
+                new com.shortify.entity.ClickEvent(url.getId(), Instant.parse("2026-01-02T01:00:00Z"), "example.com", "Mobile", "other-visitor")));
         clearInvocations(clicks);
         JsonNode body = mapper.readTree(send("GET", "/api/urls/" + url.getId() + "/analytics", null, token).body());
         assertThat(body.path("totalClicks").asLong()).isEqualTo(3);
+        assertThat(body.path("uniqueClicks").asLong()).isEqualTo(2);
         assertThat(body.path("clicksOverTime")).isEqualTo(mapper.valueToTree(List.of(
                 Map.of("date", "2026-01-01", "clicks", 1), Map.of("date", "2026-01-02", "clicks", 2))));
         assertThat(body.path("referrers")).isEqualTo(mapper.valueToTree(List.of(
                 Map.of("label", "example.com", "clicks", 2), Map.of("label", "Direct", "clicks", 1))));
         assertThat(body.path("devices").get(0)).isEqualTo(mapper.valueToTree(Map.of("label", "Mobile", "clicks", 2)));
-        assertThat(body.path("geography").get(0)).isEqualTo(mapper.valueToTree(Map.of("label", "Unknown", "clicks", 3)));
         verify(clicks, never()).findAll();
     }
 
@@ -288,7 +289,8 @@ class Phase4ApiIT extends RedisIntegrationSupport {
         assertThat(get("/" + url.getShortCode()).statusCode()).isEqualTo(410);
         JsonNode body = mapper.readTree(send("GET", "/api/urls/" + url.getId() + "/analytics", null, token).body());
         assertThat(body.path("totalClicks").asLong()).isZero();
-        for (String field : List.of("clicksOverTime", "referrers", "devices", "geography")) {
+        assertThat(body.path("uniqueClicks").asLong()).isZero();
+        for (String field : List.of("clicksOverTime", "referrers", "devices")) {
             assertThat(body.path(field).isArray()).isTrue();
             assertThat(body.path(field).size()).isZero();
         }

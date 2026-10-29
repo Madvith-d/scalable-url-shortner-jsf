@@ -34,7 +34,7 @@ class AnalyticsPrivacyTest {
         doAnswer(invocation -> { task.set(invocation.getArgument(0)); return null; }).when(executor).execute(any(Runnable.class));
         Instant requested = Instant.parse("2026-09-26T01:02:03Z");
         var analytics = new AnalyticsService(clicks, mock(ShortUrlService.class), executor,
-                Clock.fixed(requested, ZoneOffset.UTC));
+                Clock.fixed(requested, ZoneOffset.UTC), "test-secret");
         analytics.record(1L, "https://person:secret@EXAMPLE.com/private?token=secret", "private Mobile identifier", "8.8.8.8");
         verifyNoInteractions(clicks);
         for (var field : task.get().getClass().getDeclaredFields()) {
@@ -49,16 +49,16 @@ class AnalyticsPrivacyTest {
         var event = ArgumentCaptor.forClass(ClickEvent.class);
         verify(clicks).save(event.capture());
         assertThat(event.getValue()).extracting("accessedAt", "referrer", "device", "visitorHash")
-                .containsExactly(requested, "example.com", "Mobile", "838c4c2573848f58e74332341a7ca6bc5cd86a8aec7d644137d53b4d597f10f5");
+                .containsExactly(requested, "example.com", "Mobile", "d0cdd594eab0f64031bd7e8e8d65da0f2739a6d07140eb55c12a7884c4db379f");
         assertThat(ClickEvent.class.getDeclaredFields()).extracting(java.lang.reflect.Field::getName)
-                .containsExactlyInAnyOrder("id", "shortUrlId", "accessedAt", "referrer", "device", "visitorHash");
+                .containsExactlyInAnyOrder("id", "shortUrlId", "accessedAt", "referrer", "device", "legacyGeography", "visitorHash");
     }
 
     @Test
     void lookupFailureStillSavesAndRejectedTaskNeverLooksUp() {
         var clicks = mock(ClickEventRepository.class);
         var executor = mock(ThreadPoolTaskExecutor.class);
-        var analytics = new AnalyticsService(clicks, mock(ShortUrlService.class), executor, Clock.systemUTC());
+        var analytics = new AnalyticsService(clicks, mock(ShortUrlService.class), executor, Clock.systemUTC(), "test-secret");
         doThrow(new TaskRejectedException("full")).when(executor).execute(any(Runnable.class));
         analytics.record(1L, null, null, "8.8.8.8");
         verifyNoInteractions(clicks);

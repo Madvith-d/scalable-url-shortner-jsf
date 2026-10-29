@@ -5,8 +5,8 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
 
-import com.shortify.config.GeoLocationProperties;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -15,11 +15,8 @@ public class ClientIpResolver {
     static final int MAX_HEADER_LENGTH = 4096;
     static final int MAX_HOPS = 32;
     private final List<IpAddress.Cidr> trustedProxies;
-    private final boolean enabled;
 
-    public ClientIpResolver(GeoLocationProperties properties) {
-        enabled = properties.enabled();
-        String configured = properties.trustedProxies();
+    public ClientIpResolver(@Value("${shortify.analytics.trusted-proxies:}") String configured) {
         if (configured == null || configured.isBlank()) {
             trustedProxies = List.of();
         } else {
@@ -35,9 +32,6 @@ public class ClientIpResolver {
     }
 
     public String resolve(HttpServletRequest request) {
-        if (!enabled) {
-            return null;
-        }
         InetAddress peer = IpAddress.parse(request.getRemoteAddr());
         if (peer == null) {
             return null;

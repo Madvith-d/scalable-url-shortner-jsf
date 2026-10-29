@@ -5,6 +5,8 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.LongAdder;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import com.shortify.dto.AnalyticsResponse;
 import com.shortify.entity.ClickEvent;
@@ -12,6 +14,7 @@ import com.shortify.repository.ClickEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.task.TaskRejectedException;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
@@ -26,14 +29,17 @@ public class AnalyticsService {
     private final ShortUrlService urls;
     private final ThreadPoolTaskExecutor executor;
     private final Clock clock;
+    private final String visitorHashSecret;
     private final LongAdder dropped = new LongAdder();
 
     public AnalyticsService(ClickEventRepository clicks, ShortUrlService urls,
-                            @Qualifier("analyticsExecutor") ThreadPoolTaskExecutor executor, Clock clock) {
+                            @Qualifier("analyticsExecutor") ThreadPoolTaskExecutor executor, Clock clock,
+                            @Value("${shortify.jwt.secret}") String visitorHashSecret) {
         this.clicks = clicks;
         this.urls = urls;
         this.executor = executor;
         this.clock = clock;
+        this.visitorHashSecret = visitorHashSecret;
     }
 
     public void record(Long id, String referrer, String userAgent, String clientIp) {
@@ -43,7 +49,7 @@ public class AnalyticsService {
         try {
             executor.execute(() -> {
                 try {
-                    clicks.save(new ClickEvent(id, accessedAt, host, deviceType, visitorHash(clientIp)));
+                    clicks.save(new ClickEvent(id, accessedAt, host, deviceType, visitorHash(id, clientIp)));
                 } catch (RuntimeException exception) {
                     drop();
                 }
@@ -73,12 +79,14 @@ public class AnalyticsService {
                 buckets(clicks.referrers(id)), buckets(clicks.devices(id)));
     }
 
-    private static String visitorHash(String ip) {
+    private String visitorHash(Long id, String ip) {
         if (ip == null) return null;
         try {
-            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(ip.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(visitorHashSecret.getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] digest = mac.doFinal(("shortify-visitor:" + id + ":" + ip).getBytes(java.nio.charset.StandardCharsets.UTF_8));
             return java.util.HexFormat.of().formatHex(digest);
-        } catch (java.security.NoSuchAlgorithmException exception) {
+        } catch (java.security.GeneralSecurityException exception) {
             throw new IllegalStateException(exception);
         }
     }

@@ -2,6 +2,8 @@
 
 Each phase is committed only after its acceptance checks pass. This records checks actually executed during implementation, not promises about future verification.
 
+**Historical note:** the earlier Phase 4 records below describe the version tested at that time. Geography lookup and its analytics API/UI were removed on 2026-10-29; current analytics include total and approximate unique clicks. See the root README for the current contract. The old location columns remain in existing databases for data compatibility, but new events store `Unknown` and no location is returned by the API.
+
 ## Phase 1 — Backend and database foundation
 
 - Docker Compose PostgreSQL 17.11 started healthy with persistent storage (local override: port 5434).

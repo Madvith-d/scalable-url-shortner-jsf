@@ -1,6 +1,5 @@
 package com.shortify.service;
 
-import com.shortify.config.GeoLocationProperties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
@@ -49,13 +48,6 @@ class ClientIpResolverTest {
             "3fff::1", "3fff:fff::1", "5f00::1", "fc00::1", "fdff::1", "fe80::1", "fec0::1", "ff02::1"})
     void filtersNonPublicAndSpecialPurposeAddresses(String ip) {
         assertThat(direct.resolve(request(ip, null))).isNull();
-    }
-
-    @Test
-    void disabledGeolocationDoesNotExtractAnAddress() {
-        var disabled = new ClientIpResolver(new GeoLocationProperties(false, "", "", "10.0.0.0/8"));
-        assertThat(disabled.resolve(request("8.8.8.8", null))).isNull();
-        assertThat(disabled.resolve(request("10.0.0.1", "8.8.8.8"))).isNull();
     }
 
     @Test
@@ -130,7 +122,7 @@ class ClientIpResolverTest {
     }
 
     private static ClientIpResolver resolver(String proxies) {
-        return new ClientIpResolver(new GeoLocationProperties(true, "", "", proxies));
+        return new ClientIpResolver(proxies);
     }
 
     private static MockHttpServletRequest request(String peer, String header) {

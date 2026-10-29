@@ -2,7 +2,7 @@
 
 A URL shortening and click analytics platform built with **Java 21, Spring Boot, Next.js, TypeScript, PostgreSQL, and Redis**. The backend is a layered modular monolith: controllers → services → Spring Data JPA repositories. Spring Security issues and validates JWTs; Next.js is a client of the backend API, not a separate authentication system.
 
-Create short links with optional aliases, scheduled activation, expiration, and click caps; generate/download/share QR codes, manage your own links, and view click totals, daily activity, referrers, devices, and available geography. Public redirects use Redis with PostgreSQL fallback. Rate limiting, asynchronous click processing, and scheduled expiration cleanup use Redis and Spring mechanisms—no microservices, Kafka, or cloud infrastructure.
+Create short links with optional aliases, scheduled activation, expiration, and click caps; generate/download/share QR codes, manage your own links, and view click totals, unique clicks, daily activity, referrers, and devices. Public redirects use Redis with PostgreSQL fallback. Rate limiting, asynchronous click processing, and scheduled expiration cleanup use Redis and Spring mechanisms—no microservices, Kafka, or cloud infrastructure.
 
 Use TLS before exposing bearer tokens outside local development. Read the cache consistency, outage, and best-effort analytics limitations below before deployment. The approved requirements remain in `phases.md` and `scope.md`; executed checks are recorded in [`docs/verification.md`](docs/verification.md).
 
@@ -215,22 +215,21 @@ All application, authentication/authorization, and CORS errors use the same four
 ```json
 {
   "totalClicks": 2,
+  "uniqueClicks": 1,
   "clicksOverTime": [{"date": "2026-09-26", "clicks": 2}],
   "referrers": [{"label": "example.com", "clicks": 2}],
-  "devices": [{"label": "Mobile", "clicks": 2}],
-  "geography": [{"label": "Unknown", "clicks": 2}]
+  "devices": [{"label": "Mobile", "clicks": 2}]
 }
 ```
 
-An unclicked URL returns `totalClicks: 0` and four empty arrays. This is a lifetime aggregate, without query parameters: UTC calendar days ascending, no zero-filled days; category buckets sorted by clicks descending, then label ascending. PostgreSQL performs `COUNT`/`GROUP BY`; raw events are never fetched into application memory for aggregation. The ownership check and five aggregate queries use one read-only repeatable-read snapshot. Counts include persisted successful GET redirects only, not HEAD, missing/inactive/expired URLs, rejected requests, or failed/dropped analytics tasks. Async arrival means counts may lag the redirect. Inactive/expired URLs retain analytics and remain owner-readable.
+An unclicked URL returns `totalClicks: 0`, `uniqueClicks: 0`, and three empty arrays. Unique clicks count distinct IP hashes for new events; existing events have no visitor hash and changing IPs/shared networks make this an approximation. This is a lifetime aggregate, without query parameters: UTC calendar days ascending, no zero-filled days; category buckets sorted by clicks descending, then label ascending. PostgreSQL performs `COUNT`/`GROUP BY`; raw events are never fetched into application memory for aggregation. The ownership check and aggregate queries use one read-only repeatable-read snapshot. Counts include persisted successful GET redirects only, not HEAD, missing/inactive/expired URLs, rejected requests, or failed/dropped analytics tasks. Async arrival means counts may lag the redirect. Inactive/expired URLs retain analytics and remain owner-readable.
 
-V3 adds `click_events` (URL foreign key, access timestamp, referrer host, device, geography), an URL/time index, and an active-expiry cleanup index. V1/V2 are unchanged. Management and cleanup only deactivate: URL IDs, ownership, and click history remain intact. Physical deletion, used by test cleanup, cascades click rows.
+V3 adds `click_events` (URL foreign key, access timestamp, referrer host, device, and a legacy geography field), an URL/time index, and an active-expiry cleanup index. V4 adds nullable legacy country/city fields; these fields remain for existing row compatibility, but new rows use `Unknown` and location data is no longer exposed. V6 adds nullable visitor hashes for unique-click aggregation. Management and cleanup only deactivate: URL IDs, ownership, and click history remain intact. Physical deletion, used by test cleanup, cascades click rows.
 
 ### Privacy and bounded background work
 
 - Referrers retain only a lowercase HTTP(S) URI host: credentials, port, path, query, and fragment are removed. Missing referrers are `Direct`; malformed/non-HTTP(S)/oversized values are `Unknown`.
-- User agents are reduced immediately to `Bot`, `Tablet`, `Mobile`, `Desktop`, or `Unknown`. Raw user agents and HTTP request objects are never queued. A validated public IP may be held transiently in the bounded in-memory analytics queue/worker for country/city lookup; it is never stored in PostgreSQL, Redis, application logs, or analytics responses. No visitor hash or unique-visitor tracking is added.
-- Geography uses a local city database first, then a paid HTTPS provider if keyed or the configurable keyless HTTPS fallback otherwise. Only country code and city are persisted, never coordinates or full provider responses. Unknown, private/local addresses, historical clicks, and unsuccessful lookups display `Unknown`. Arbitrary geography headers are always ignored; forwarded IPs are used only through explicitly trusted proxy CIDRs. See the geolocation setup below.
+- User agents are reduced immediately to `Bot`, `Tablet`, `Mobile`, `Desktop`, or `Unknown`. Raw user agents and HTTP request objects are never queued. A validated public IP may be held transiently in the bounded in-memory analytics queue/worker; only an HMAC-SHA256 keyed with the application secret is stored for unique-click aggregation. Forwarded IPs are used only through explicitly trusted proxy CIDRs.
 - Spring's `analyticsExecutor` uses a fixed worker maximum and bounded queue, with `AbortPolicy`, never caller-runs or blocking queue insertion. Rejection and persistence failure drop the event, increment `AnalyticsService.droppedCount()`, and emit a sanitized warning on the first and every 100th drop. There is no public metrics API.
 - Analytics is best effort, not a durable queue: saturation, DB failure, shutdown timeout, or process crashes can lose events. Shutdown allows up to ten seconds to drain. Aggregate bucket cardinality can grow with history; no BI/range/export/retention feature is added.
 - Cleanup runs automatically after each configured fixed delay, one transaction and at most one batch per tick. PostgreSQL `FOR UPDATE SKIP LOCKED` allows concurrent workers without selecting locked rows. It marks expired active URLs inactive and invalidates after commit. A backlog takes multiple ticks; redirect expiry checks do not wait for cleanup.
@@ -248,7 +247,7 @@ Redis read/write errors or corrupt payloads fall back to PostgreSQL; cache failu
 - Auth and URL creation **fail closed with JSON 503 `RATE_LIMIT_UNAVAILABLE` and `Retry-After`** if Redis cannot enforce their budget.
 - Redirects use a fixed-memory, per-process **global** fallback budget (default 100 per 60 seconds, shared across all clients); after exhaustion they also return 503. This bounds fallback DB load without an unbounded per-client map. The fallback budget resets on process restart and multiplies across application instances; it is not a distributed substitute for Redis.
 - Healthy Redis enforces an atomic Lua `INCR` + first-hit `PEXPIRE` fixed window per category/client. Auth register/login share one category; creation and redirect each have their own. Exceeded limits return the normal four-field JSON error with **429 `RATE_LIMITED`**, `Retry-After` (whole seconds rounded up), and `Cache-Control: no-store`.
-- Keys contain HMAC-SHA256 of the socket peer IP using the configured secret, never the raw IP, and expire with the window. NAT clients share a budget. `server.forward-headers-strategy=none`: the rate limiter ignores `X-Forwarded-For` and `Forwarded`. Behind a proxy the proxy's socket address remains the rate-limit key. The separate analytics-only trusted-proxy configuration below does not change rate-limit identity or globally enable forwarding headers.
+- Keys contain HMAC-SHA256 of the socket peer IP using the configured secret, never the raw IP, and expire with the window. NAT clients share a budget. `server.forward-headers-strategy=none`: the rate limiter ignores `X-Forwarded-For` and `Forwarded`. Behind a proxy the proxy's socket address remains the rate-limit key. The analytics-only `ANALYTICS_TRUSTED_PROXIES` setting does not change rate-limit identity or globally enable forwarding headers.
 - Limiting is selected by the actual Spring handler, not a raw URI heuristic. Auth POST, authenticated URL creation, and all GET/HEAD requests routed to the redirect controller consume their category budget. Encoded aliases, legacy codes, and misses cannot bypass it. Framework resource handlers, error handlers, OPTIONS/preflight, and management/analytics reads are not limited. A one-segment name such as `/favicon.ico` currently resolves through the redirect controller, so it is treated as a redirect miss rather than a static resource.
 
 ### Phase 4 settings
@@ -267,51 +266,11 @@ Redis read/write errors or corrupt payloads fall back to PostgreSQL; cache failu
 | `CLEANUP_INTERVAL` | `60000` | Fixed delay and initial delay, milliseconds |
 | `CLEANUP_BATCH_SIZE` | `200` | Rows per tick, 1–10000 |
 
-## Country and city geolocation
+## Unique click IP handling
 
-Geolocation is an **approximation from the public IP**, not GPS or a physical address. V4 adds nullable `country_code` and `city` fields to click records without altering historical events or V1–V3 migrations. Old events remain Unknown because no historical IPs were stored. The existing analytics response keeps its five fields; `geography` now groups by country code.
+Unique click counts use a validated client IP only to produce a link-scoped HMAC-SHA256 value in the asynchronous analytics worker. The application secret is the HMAC key, so database readers cannot cheaply reverse the hash by enumerating IPs or correlate a visitor across links. Rotating `JWT_SECRET` changes future hashes and may make unique counts undercount prior visitors. Location lookup and external provider calls have been removed. Behind a reverse proxy, set `ANALYTICS_TRUSTED_PROXIES` to the proxy CIDRs so the resolver can safely identify the visitor from `X-Forwarded-For`; an empty value uses only the socket peer. Forwarded headers from untrusted peers are ignored. The frontend does not proxy public redirects.
 
-The additional owner-only endpoint is:
-
-```text
-GET /api/urls/{id}/analytics/geography?by=country
-GET /api/urls/{id}/analytics/geography?by=city
-```
-
-It returns `{ "totalClicks": 12, "buckets": [{ "label": "US", "clicks": 8 }] }`, with at most ten buckets ordered by count descending then label. City labels include country context. Missing values are Unknown. `by` defaults to `country`; unsupported values return 400. Counts include all persisted successful GET clicks, including the existing Bot device category, rather than introducing new bot filtering. The frontend calculates rounded percentages against `totalClicks`, so the top ten need not add up to 100%. Reads are owner-protected and `no-store`; another owner's ID remains a concealed 404.
-
-### Providers and configuration
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `GEO_ENABLED` | `true` | Enable lookup; false skips address extraction and records Unknown |
-| `GEO_DATABASE_PATH` | Empty | Native backend path to a readable MaxMind-compatible city MMDB file |
-| `GEO_COUNTRY_DATABASE_PATH` | Empty | Optional native backend path to a MaxMind-compatible country MMDB, consulted when the city record has no country |
-| `GEO_DATABASE_FILE` | Unset | Host city MMDB file mounted by the optional Compose override; defaults to the bundled `locationdb/dbip-city-lite-2026-10.mmdb` |
-| `GEO_COUNTRY_DATABASE_FILE` | Unset | Host country MMDB file mounted by the optional Compose override; defaults to the bundled `locationdb/dbip-country-lite-2026-10.mmdb` |
-| `GEO_API_KEY` | Empty | Paid ip-api HTTPS key; when set, takes precedence over the free fallback |
-| `GEO_FREE_FALLBACK_ENABLED` | `true` | Use keyless ipwho.is HTTPS lookup when no paid key exists and local city data is missing |
-| `GEO_TRUSTED_PROXIES` | Empty | Comma-separated trusted proxy CIDRs, for analytics IP extraction only |
-
-1. Use a city database such as **GeoLite2 City** from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data/), or the bundled **DB-IP City Lite** file at `locationdb/dbip-city-lite-2026-10.mmdb` (DB-IP Lite has its own attribution and usage terms). An optional country MMDB at `locationdb/dbip-country-lite-2026-10.mmdb` adds a local country fallback when the city record has no country. Keep external databases outside Git (`*.mmdb` is ignored). For a native backend set `GEO_DATABASE_PATH` (and optionally `GEO_COUNTRY_DATABASE_PATH`) to the file. The readers are reused until application restart; restart after replacing files to load updates.
-2. For Docker, the optional override mounts the bundled `locationdb/*.mmdb` files read-only by default. Override them by setting `GEO_DATABASE_FILE` / `GEO_COUNTRY_DATABASE_FILE` in the ignored root `.env` to absolute host paths (ensure the non-root container user can read them), then run:
-
-   ```bash
-   docker compose -f docker-compose.yml -f docker-compose.geo.yml --profile app up -d --build --wait
-   ```
-
-   The optional override mounts both files read-only and sets stable container paths (`/opt/geoip/city.mmdb`, `/opt/geoip/country.mmdb`). A missing source file fails the mount rather than creating an empty directory. The default Compose file remains usable without any database.
-3. Without a paid key, the enabled-by-default **ipwho.is HTTPS fallback** requests only `success`, `country_code`, and `city`, so public-IP lookups work without provisioning a database/key. **It sends the visitor's public IP to an external provider.** Set `GEO_FREE_FALLBACK_ENABLED=false` for local-only operation without a key. Review [ipwho.is usage terms and limits](https://ipwhois.io/): the free service is intended for non-commercial use; use a licensed local database or paid provider for production/commercial workloads as appropriate. Disclose external processing in your privacy notice.
-4. To use paid ip-api instead, put its key in `GEO_API_KEY` in the ignored server-side `.env`. Never place it in `NEXT_PUBLIC_*`, frontend files, committed configuration, or chat. Only `status`, `countryCode`, and `city` are requested over HTTPS. Both external modes have a maximum 1.5-second timeout and no per-click retry. The free **HTTP** ip-api endpoint is never used. A configured paid key does not silently fail over to another provider.
-5. With the free fallback disabled and neither a readable database nor a key, the app starts but records Unknown and warns that no lookup source exists. Missing/corrupt local data and failed remote lookups do not stop redirects; any usable local country is retained when fallback fails. Provider errors/rate limits trigger temporary backoff, with sanitized warnings (no visitor IPs, keys, or response bodies). Historical Unknown events cannot be backfilled because raw IPs were never stored.
-
-Lookups run on the bounded analytics worker **before** its database insert transaction, never on the redirect thread. Outbound fallback is limited to one request per process with no additional request queue; concurrent excess lookups retain local data or Unknown. Responses are limited to 8 KiB, and failures back off from 60 seconds up to 15 minutes (numeric provider retry delays are honored up to 24 hours). Slow providers may delay analytics or fill the bounded queue, but do not turn geolocation into synchronous redirect latency. Existing best-effort/drop behavior still applies. Redirects remain HTTP **302**, and HEAD does not record a click.
-
-### Proxy trust and local development
-
-By default analytics uses the socket peer and ignores forwarded IP headers. Local/private addresses, malformed values, reserved ranges, and loopback produce Unknown without provider calls; localhost testing is not a way to obtain the user's real country/city.
-
-Configure `GEO_TRUSTED_PROXIES` only with the CIDRs of reverse proxies you control. When the immediate peer is trusted, the resolver validates the bounded `X-Forwarded-For` chain and walks from right to left through trusted hops, selecting the first untrusted address. The proxy must overwrite or safely append forwarding metadata, and direct backend access should be restricted appropriately. Do not trust all addresses (`0.0.0.0/0` or `::/0`) or a shared network merely to make location appear. `Forwarded`, `X-Real-IP`, and client-supplied country/city headers are not alternative sources. The Next.js frontend does not proxy public redirects in this application; short URLs point directly to the backend, so no frontend forwarding layer is added.
+Shared networks may combine visitors, and changing IPs may count one visitor more than once. Historical click rows have no visitor hash, so unique-click counts cover newly recorded clicks only.
 
 ## Frontend development
 
@@ -333,7 +292,7 @@ Routes:
 - `/login` and `/register`: backend account authentication.
 - `/dashboard`: paginated owner-only links and creation form.
 - `/urls/{id}`: destination, availability schedule/cap/count, QR generation/sharing, short URL copying, and activation/deactivation.
-- `/urls/{id}/analytics`: total clicks, daily activity, referrers, devices, and geography.
+- `/urls/{id}/analytics`: total and unique clicks, daily activity, referrers, and devices.
 
 Next.js consumes the Spring JWT and sends bearer headers. Tokens live in per-tab `sessionStorage` and client memory, persist across a reload in that tab, and are cleared at logout or session expiry. There is no refresh token or independent frontend identity system. Session storage is readable by JavaScript: an XSS vulnerability could expose a token. Use TLS, keep dependencies updated, and never render untrusted HTML. Logging out discards the local token; it does not revoke copies held elsewhere.
 
